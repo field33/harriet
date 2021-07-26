@@ -13,7 +13,7 @@ use std::borrow::Cow;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TurtleDocument<'a> {
-    statements: Vec<Statement<'a>>,
+    items: Vec<Item<'a>>,
 }
 
 impl<'a> TurtleDocument<'a> {
@@ -22,14 +22,29 @@ impl<'a> TurtleDocument<'a> {
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
-            many1(alt((
-                map(Statement::parse, Some),
-                map(multispace1, |_| None),
-            ))),
+            many1(alt((map(Item::parse, Some), map(multispace1, |_| None)))),
             |maybe_statements| Self {
-                statements: maybe_statements.into_iter().filter_map(|n| n).collect(),
+                items: maybe_statements.into_iter().filter_map(|n| n).collect(),
             },
         )(input)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Item<'a> {
+    Statement(Statement<'a>),
+    Comment(Comment<'a>),
+}
+
+impl<'a> Item<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        alt((
+            map(Comment::parse, Item::Comment),
+            map(Statement::parse, Item::Statement),
+        ))(input)
     }
 }
 
@@ -45,6 +60,151 @@ impl<'a> Statement<'a> {
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Directive::parse, Self::Directive)(input)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Comment<'a> {
+    comment: Cow<'a, str>,
+}
+
+impl<'a> Comment<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map_res(Self::parse_raw, |comment_raw: &'a str| {
+            let comment = Cow::Borrowed(comment_raw);
+
+            Ok(Self { comment })
+        })(input)
+    }
+
+    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, &str, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        delimited(char('#'), is_not("\n"), char('\n'))(input)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Triples<'a> {
+    Labeled(Subject<'a>, PredicateObjectList<'a>),
+    // Labeled()
+    // Labeled()
+}
+
+impl<'a> Triples<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((
+                map_res(
+                    tuple((Subject::parse, multispace1, PredicateObjectList::parse)),
+                    |(subject, _, list)| Ok(Self::Labeled(subject, list)),
+                ),
+                multispace1,
+                char('.'),
+            )),
+            |(triples, _, _)| triples,
+        )(input)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Subject<'a> {
+    IRI(IRI<'a>),
+    // TOOD: BlankNode
+    // TOOD: Collection
+}
+
+impl<'a> Subject<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(IRI::parse, Self::IRI)(input)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum IRI<'a> {
+    IRIReference(IRIReference<'a>),
+    // TODO: PrefixedName
+}
+
+impl<'a> IRI<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(IRIReference::parse, Self::IRIReference)(input)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PredicateObjectList<'a> {
+    // TODO: should be "Verb" - Enum between IRI and literal "a"
+    verb: IRI<'a>,
+    objectList: ObjectList<'a>,
+}
+
+impl<'a> PredicateObjectList<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((IRI::parse, multispace1, ObjectList::parse)),
+            |(verb, _, list)| Self {
+                verb,
+                objectList: list,
+            },
+        )(input)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ObjectList<'a> {
+    list: Vec<Object<'a>>,
+}
+
+impl<'a> ObjectList<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            many1(alt((
+                // First item
+                map(Object::parse, Some),
+                // Subsequent items delimited by whitespace and ','
+                map(
+                    tuple((multispace1, char(','), multispace1, Object::parse)),
+                    |(_, _, _, object)| Some(object),
+                ),
+            ))),
+            |maybe_items| Self {
+                list: maybe_items.into_iter().filter_map(|n| n).collect(),
+            },
+        )(input)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Object<'a> {
+    IRI(IRI<'a>), // TODO: more variants
+}
+
+impl<'a> Object<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(IRI::parse, Self::IRI)(input)
     }
 }
 
@@ -309,29 +469,58 @@ mod tests {
     }
 
     #[test]
+    fn parse_simple_triple() {
+        assert_eq!(
+            Ok((
+                "",
+                Triples::Labeled(
+                    Subject::IRI(IRI::IRIReference(IRIReference {
+                        iri: Cow::Borrowed("http://example.org/#spiderman")
+                    })),
+                    PredicateObjectList {
+                        verb: IRI::IRIReference(IRIReference {
+                            iri: Cow::Borrowed(
+                                "http://www.perceive.net/schemas/relationship/enemyOf"
+                            )
+                        }),
+                        objectList: ObjectList {
+                            list: vec![Object::IRI(IRI::IRIReference(IRIReference {
+                                iri: Cow::Borrowed("http://example.org/#green-goblin")
+                            }))]
+                        }
+                    }
+                )
+            )),
+            Triples::parse::<VerboseError<&str>>(include_str!(
+                "../tests/reference_examples/example2.ttl"
+            ))
+        );
+    }
+
+    #[test]
     fn parse_document() {
         assert_eq!(
             Ok((
                 "",
                 TurtleDocument {
-                    statements: vec![
-                        Statement::Directive(Directive::Base(BaseDirective {
+                    items: vec![
+                        Item::Statement(Statement::Directive(Directive::Base(BaseDirective {
                             iri: IRIReference {
                                 iri: Cow::Borrowed("http://example.com/ontology")
                             }
-                        })),
-                        Statement::Directive(Directive::Prefix(PrefixDirective {
+                        }))),
+                        Item::Statement(Statement::Directive(Directive::Prefix(PrefixDirective {
                             prefix: None,
                             iri: IRIReference {
                                 iri: Cow::Borrowed("http://example.com/ontology")
                             }
-                        })),
-                        Statement::Directive(Directive::Prefix(PrefixDirective {
+                        }))),
+                        Item::Statement(Statement::Directive(Directive::Prefix(PrefixDirective {
                             prefix: Some(Cow::Borrowed("owl")),
                             iri: IRIReference {
                                 iri: Cow::Borrowed("http://example.com/ontology")
                             }
-                        }))
+                        })))
                     ]
                 }
             )),
@@ -356,6 +545,22 @@ mod tests {
                 @prefix owl: <http://example.com/ontology> .
                 
                 <http://example.com/ontology> rdf:type owl:Ontology .
+            "#;
+        assert!(TurtleDocument::parse::<VerboseError<&str>>(ontology).is_ok());
+        assert!(TurtleDocument::parse::<VerboseError<&str>>(ontology)
+            .unwrap()
+            .0
+            .is_empty());
+    }
+
+    #[test]
+    fn parse_document_with_comment() {
+        let ontology = r#"
+                # The base here
+                @base <http://example.com/ontology> .
+                # And some prefixes here
+                @prefix : <http://example.com/ontology> .
+                @prefix owl: <http://example.com/ontology> .
             "#;
         assert!(TurtleDocument::parse::<VerboseError<&str>>(ontology).is_ok());
         assert!(TurtleDocument::parse::<VerboseError<&str>>(ontology)
