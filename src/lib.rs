@@ -1,5 +1,9 @@
-use cookie_factory::GenError;
+use cookie_factory::combinator::{cond as cf_cond, string as cf_string};
+use cookie_factory::lib::std::io::Write;
+use cookie_factory::multi::separated_list as cf_separated_list;
+use cookie_factory::sequence::tuple as cf_tuple;
 use cookie_factory::{do_gen, gen_slice};
+use cookie_factory::{GenError, SerializeFn};
 use nom::alt;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag};
@@ -28,6 +32,10 @@ impl<'a> TurtleDocument<'a> {
             },
         )(input)
     }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_separated_list(cf_string("\n"), subject.items.iter().map(Item::gen))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -46,6 +54,13 @@ impl<'a> Item<'a> {
             map(Statement::parse, Item::Statement),
         ))(input)
     }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        match subject {
+            Self::Statement(statement) => Statement::gen(statement),
+            _ => todo!(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -60,6 +75,13 @@ impl<'a> Statement<'a> {
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Directive::parse, Self::Directive)(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        match subject {
+            Self::Directive(directive) => Directive::gen(directive),
+            _ => todo!(),
+        }
     }
 }
 
@@ -229,6 +251,14 @@ impl<'a> Directive<'a> {
             map(PrefixDirective::parse, Self::Prefix),
         ))(input)
     }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::Base(directive) => Box::new(BaseDirective::gen(directive)),
+            Self::Prefix(directive) => Box::new(PrefixDirective::gen(directive)),
+            _ => todo!(),
+        }
+    }
 }
 
 /// A directive specifying the base for relative IRIs. E.g. `@base <http://example.com> .`
@@ -259,6 +289,16 @@ impl<'a> BaseDirective<'a> {
             char('.'),
         ))(input)
         .map(|(remainder, (_, _, iri, _, _))| (remainder, iri))
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            cf_string("@base"),
+            cf_string(" "),
+            IRIReference::gen(&subject.iri),
+            cf_string(" "),
+            cf_string("."),
+        ))
     }
 }
 
@@ -300,6 +340,27 @@ impl<'a> PrefixDirective<'a> {
         ))(input)
         .map(|(remainder, (_, _, prefix, _, _, iri, _, _))| (remainder, (prefix, iri)))
     }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        dbg!(&subject);
+        cf_tuple((
+            cf_string("@prefix"),
+            cf_string(" "),
+            Self::gen_prefix(&subject.prefix),
+            cf_string(":"),
+            cf_string(" "),
+            IRIReference::gen(&subject.iri),
+            cf_string(" "),
+            cf_string("."),
+        ))
+    }
+
+    fn gen_prefix<W: Write + 'a>(prefix: &'a Option<Cow<str>>) -> Box<dyn SerializeFn<W> + 'a> {
+        match prefix {
+            Some(prefix) => Box::new(cf_string(prefix)),
+            None => Box::new(cf_string("")),
+        }
+    }
 }
 
 /// A IRI wrapped by angle brackets. E.g. `<http://example.com/foo>`
@@ -331,14 +392,8 @@ impl<'a> IRIReference<'a> {
         delimited(char('<'), is_not(">"), char('>'))(input)
     }
 
-    fn render(
-        i: (&'a mut [u8], usize),
-        iri_ref: &'a Self,
-    ) -> Result<(&'a mut [u8], usize), GenError> {
-        do_gen!(
-            (i.0, i.1),
-            gen_slice!(b"<") >> gen_slice!(iri_ref.iri.as_bytes()) >> gen_slice!(b">")
-        )
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((cf_string("<"), cf_string(&subject.iri), cf_string(">")))
     }
 }
 
@@ -367,16 +422,16 @@ mod tests {
     fn render_iri_reference() {
         let mut mem: [u8; 1024] = [0; 1024];
         let buf = &mut mem[..];
-        let (_, written_bytes) = IRIReference::render(
-            (buf, 0),
-            &IRIReference {
+        let (_, written_bytes) = cookie_factory::gen(
+            IRIReference::gen(&IRIReference {
                 iri: Cow::Borrowed("http://example.com/ontology"),
-            },
+            }),
+            buf,
         )
         .unwrap();
         assert_eq!(
             "<http://example.com/ontology>".as_bytes(),
-            &mem[..written_bytes]
+            &mem[..written_bytes as usize]
         );
     }
 
@@ -532,6 +587,43 @@ mod tests {
                 @prefix owl: <http://example.com/ontology> .
             "#
             )
+        );
+    }
+
+    #[test]
+    fn render_document() {
+        let mut mem: [u8; 1024] = [0; 1024];
+        let buf = &mut mem[..];
+        let (_, written_bytes) = cookie_factory::gen(
+            TurtleDocument::gen(&TurtleDocument {
+                items: vec![
+                    Item::Statement(Statement::Directive(Directive::Base(BaseDirective {
+                        iri: IRIReference {
+                            iri: Cow::Borrowed("http://example.com/ontology"),
+                        },
+                    }))),
+                    Item::Statement(Statement::Directive(Directive::Prefix(PrefixDirective {
+                        prefix: None,
+                        iri: IRIReference {
+                            iri: Cow::Borrowed("http://example.com/ontology"),
+                        },
+                    }))),
+                    Item::Statement(Statement::Directive(Directive::Prefix(PrefixDirective {
+                        prefix: Some(Cow::Borrowed("owl")),
+                        iri: IRIReference {
+                            iri: Cow::Borrowed("http://example.com/ontology"),
+                        },
+                    }))),
+                ],
+            }),
+            buf,
+        )
+        .unwrap();
+        assert_eq!(
+            r#"@base <http://example.com/ontology> .
+@prefix : <http://example.com/ontology> .
+@prefix owl: <http://example.com/ontology> ."#,
+            std::str::from_utf8(&mem[..written_bytes as usize]).unwrap()
         );
     }
 
