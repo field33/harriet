@@ -1,10 +1,10 @@
-use cookie_factory::combinator::{cond as cf_cond, string as cf_string};
+#![allow(dead_code)]
+
+use cookie_factory::combinator::string as cf_string;
 use cookie_factory::lib::std::io::Write;
 use cookie_factory::multi::separated_list as cf_separated_list;
 use cookie_factory::sequence::tuple as cf_tuple;
-use cookie_factory::{do_gen, gen_slice};
-use cookie_factory::{GenError, SerializeFn};
-use nom::alt;
+use cookie_factory::SerializeFn;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag};
 use nom::character::complete::{char, multispace1};
@@ -55,10 +55,10 @@ impl<'a> Item<'a> {
         ))(input)
     }
 
-    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
-            Self::Statement(statement) => Statement::gen(statement),
-            _ => todo!(),
+            Self::Statement(statement) => Box::new(Statement::gen(statement)),
+            Self::Comment(comment) => Box::new(Comment::gen(comment)),
         }
     }
 }
@@ -66,7 +66,7 @@ impl<'a> Item<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Statement<'a> {
     Directive(Directive<'a>),
-    // TODO: Triples
+    Triples(Triples<'a>),
 }
 
 impl<'a> Statement<'a> {
@@ -74,13 +74,16 @@ impl<'a> Statement<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(Directive::parse, Self::Directive)(input)
+        alt((
+            map(Directive::parse, Self::Directive),
+            map(Triples::parse, Self::Triples),
+        ))(input)
     }
 
-    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
-            Self::Directive(directive) => Directive::gen(directive),
-            _ => todo!(),
+            Self::Directive(directive) => Box::new(Directive::gen(directive)),
+            Self::Triples(triples) => Box::new(Triples::gen(triples)),
         }
     }
 }
@@ -108,6 +111,10 @@ impl<'a> Comment<'a> {
     {
         delimited(char('#'), is_not("\n"), char('\n'))(input)
     }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((cf_string("#"), cf_string(&subject.comment), cf_string("\n")))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -134,6 +141,16 @@ impl<'a> Triples<'a> {
             |(triples, _, _)| triples,
         )(input)
     }
+
+    fn gen<W: Write + 'a>(_subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        #[allow(unreachable_code)]
+        cf_string(todo!().to_string())
+
+        // match subject {
+        //     Self::Directive(directive) => Directive::gen(directive),
+        //     _ => todo!(),
+        // }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -150,12 +167,20 @@ impl<'a> Subject<'a> {
     {
         map(IRI::parse, Self::IRI)(input)
     }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        match subject {
+            Self::IRI(iri) => IRI::gen(iri),
+            #[allow(unreachable_patterns)]
+            _ => todo!(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum IRI<'a> {
     IRIReference(IRIReference<'a>),
-    // TODO: PrefixedName
+    PrefixedName(PrefixedName<'a>),
 }
 
 impl<'a> IRI<'a> {
@@ -163,7 +188,17 @@ impl<'a> IRI<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(IRIReference::parse, Self::IRIReference)(input)
+        alt((
+            map(IRIReference::parse, Self::IRIReference),
+            map(PrefixedName::parse, Self::PrefixedName),
+        ))(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::IRIReference(iri) => Box::new(IRIReference::gen(iri)),
+            Self::PrefixedName(prefixed_name) => Box::new(PrefixedName::gen(prefixed_name)),
+        }
     }
 }
 
@@ -171,7 +206,7 @@ impl<'a> IRI<'a> {
 pub struct PredicateObjectList<'a> {
     // TODO: should be "Verb" - Enum between IRI and literal "a"
     verb: IRI<'a>,
-    objectList: ObjectList<'a>,
+    object_list: ObjectList<'a>,
 }
 
 impl<'a> PredicateObjectList<'a> {
@@ -183,7 +218,7 @@ impl<'a> PredicateObjectList<'a> {
             tuple((IRI::parse, multispace1, ObjectList::parse)),
             |(verb, _, list)| Self {
                 verb,
-                objectList: list,
+                object_list: list,
             },
         )(input)
     }
@@ -236,9 +271,9 @@ impl<'a> Object<'a> {
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-directive>
 pub enum Directive<'a> {
     Base(BaseDirective<'a>),
-    // TODO: Base SPARQL
     Prefix(PrefixDirective<'a>),
-    // TODO: Prefix SPARQL
+    SparqlBase(SparqlBaseDirective<'a>),
+    SparqlPrefix(SparqlPrefixDirective<'a>),
 }
 
 impl<'a> Directive<'a> {
@@ -256,7 +291,8 @@ impl<'a> Directive<'a> {
         match subject {
             Self::Base(directive) => Box::new(BaseDirective::gen(directive)),
             Self::Prefix(directive) => Box::new(PrefixDirective::gen(directive)),
-            _ => todo!(),
+            Self::SparqlBase(directive) => Box::new(SparqlBaseDirective::gen(directive)),
+            Self::SparqlPrefix(directive) => Box::new(SparqlPrefixDirective::gen(directive)),
         }
     }
 }
@@ -302,6 +338,36 @@ impl<'a> BaseDirective<'a> {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct SparqlBaseDirective<'a> {
+    iri: IRIReference<'a>,
+}
+
+impl<'a> SparqlBaseDirective<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map_res(Self::parse_raw, |iri_ref| Ok(Self { iri: iri_ref }))(input)
+    }
+
+    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, IRIReference, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        tuple((tag("BASE"), multispace1, IRIReference::parse))(input)
+            .map(|(remainder, (_, _, iri))| (remainder, iri))
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            cf_string("BASE"),
+            cf_string(" "),
+            IRIReference::gen(&subject.iri),
+        ))
+    }
+}
+
 /// A directive specifying the base for relative prefixed IRIs. E.g. `@prefix owl: <http://www.w3.org/2002/07/owl#> .`
 ///
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-prefixID>
@@ -342,11 +408,10 @@ impl<'a> PrefixDirective<'a> {
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
-        dbg!(&subject);
         cf_tuple((
             cf_string("@prefix"),
             cf_string(" "),
-            Self::gen_prefix(&subject.prefix),
+            gen_option_cow_str(&subject.prefix),
             cf_string(":"),
             cf_string(" "),
             IRIReference::gen(&subject.iri),
@@ -354,12 +419,51 @@ impl<'a> PrefixDirective<'a> {
             cf_string("."),
         ))
     }
+}
 
-    fn gen_prefix<W: Write + 'a>(prefix: &'a Option<Cow<str>>) -> Box<dyn SerializeFn<W> + 'a> {
-        match prefix {
-            Some(prefix) => Box::new(cf_string(prefix)),
-            None => Box::new(cf_string("")),
-        }
+#[derive(Debug, Eq, PartialEq)]
+pub struct SparqlPrefixDirective<'a> {
+    prefix: Option<Cow<'a, str>>,
+    iri: IRIReference<'a>,
+}
+
+impl<'a> SparqlPrefixDirective<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map_res(Self::parse_raw, |(prefix, iri_ref)| {
+            Ok(Self {
+                prefix: prefix.map(|n| Cow::Borrowed(n)),
+                iri: iri_ref,
+            })
+        })(input)
+    }
+
+    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<&'a str>, IRIReference), E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        tuple((
+            tag("PREFIX"),
+            multispace1,
+            opt(is_not(":")),
+            char(':'),
+            multispace1,
+            IRIReference::parse,
+        ))(input)
+        .map(|(remainder, (_, _, prefix, _, _, iri))| (remainder, (prefix, iri)))
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            cf_string("PREFIX"),
+            cf_string(" "),
+            gen_option_cow_str(&subject.prefix),
+            cf_string(":"),
+            cf_string(" "),
+            IRIReference::gen(&subject.iri),
+        ))
     }
 }
 
@@ -394,6 +498,45 @@ impl<'a> IRIReference<'a> {
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((cf_string("<"), cf_string(&subject.iri), cf_string(">")))
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct PrefixedName<'a> {
+    prefix: Option<Cow<'a, str>>,
+    name: Option<Cow<'a, str>>,
+    // TODO: locale
+}
+
+impl<'a> PrefixedName<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((opt(is_not(" \t\r\n:")), char(':'), opt(is_not(" \t\r\n")))),
+            |(prefix, _, name)| Self {
+                prefix: prefix.map(Cow::Borrowed),
+                name: name.map(Cow::Borrowed),
+            },
+        )(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            gen_option_cow_str(&subject.prefix),
+            cf_string(":"),
+            gen_option_cow_str(&subject.name),
+        ))
+    }
+}
+
+fn gen_option_cow_str<'a, W: Write + 'a>(
+    prefix: &'a Option<Cow<str>>,
+) -> Box<dyn SerializeFn<W> + 'a> {
+    match prefix {
+        Some(prefix) => Box::new(cf_string(prefix)),
+        None => Box::new(cf_string("")),
     }
 }
 
@@ -433,6 +576,55 @@ mod tests {
             "<http://example.com/ontology>".as_bytes(),
             &mem[..written_bytes as usize]
         );
+    }
+
+    #[test]
+    fn parse_prefixed_name() {
+        assert_eq!(
+            Ok((
+                "",
+                PrefixedName {
+                    prefix: Some(Cow::Borrowed("owl")),
+                    name: Some(Cow::Borrowed("Thing")),
+                }
+            )),
+            PrefixedName::parse::<VerboseError<&str>>("owl:Thing")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                PrefixedName {
+                    prefix: Some(Cow::Borrowed("owl")),
+                    name: None,
+                }
+            )),
+            PrefixedName::parse::<VerboseError<&str>>("owl:")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                PrefixedName {
+                    prefix: None,
+                    name: Some(Cow::Borrowed("Thing")),
+                }
+            )),
+            PrefixedName::parse::<VerboseError<&str>>(":Thing")
+        );
+    }
+
+    #[test]
+    fn render_prefixed_name() {
+        let mut mem: [u8; 1024] = [0; 1024];
+        let buf = &mut mem[..];
+        let (_, written_bytes) = cookie_factory::gen(
+            PrefixedName::gen(&PrefixedName {
+                prefix: Some(Cow::Borrowed("owl")),
+                name: Some(Cow::Borrowed("Thing")),
+            }),
+            buf,
+        )
+        .unwrap();
+        assert_eq!("owl:Thing".as_bytes(), &mem[..written_bytes as usize]);
     }
 
     #[test]
@@ -538,7 +730,7 @@ mod tests {
                                 "http://www.perceive.net/schemas/relationship/enemyOf"
                             )
                         }),
-                        objectList: ObjectList {
+                        object_list: ObjectList {
                             list: vec![Object::IRI(IRI::IRIReference(IRIReference {
                                 iri: Cow::Borrowed("http://example.org/#green-goblin")
                             }))]
@@ -628,7 +820,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn parse_document2() {
         let ontology = r#"
                 @base <http://example.com/ontology> .
@@ -636,8 +827,7 @@ mod tests {
                 @prefix : <http://example.com/ontology> .
                 @prefix owl: <http://example.com/ontology> .
                 
-                <http://example.com/ontology> rdf:type owl:Ontology .
-            "#;
+                <http://example.com/ontology> rdf:type owl:Ontology ."#;
         assert!(TurtleDocument::parse::<VerboseError<&str>>(ontology).is_ok());
         assert!(TurtleDocument::parse::<VerboseError<&str>>(ontology)
             .unwrap()
