@@ -21,7 +21,7 @@ pub struct TurtleDocument<'a> {
 }
 
 impl<'a> TurtleDocument<'a> {
-    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    pub fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
@@ -33,7 +33,7 @@ impl<'a> TurtleDocument<'a> {
         )(input)
     }
 
-    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+    pub fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_separated_list(cf_string("\n"), subject.items.iter().map(Item::gen))
     }
 }
@@ -142,14 +142,16 @@ impl<'a> Triples<'a> {
         )(input)
     }
 
-    fn gen<W: Write + 'a>(_subject: &'a Self) -> impl SerializeFn<W> + 'a {
-        #[allow(unreachable_code)]
-        cf_string(todo!().to_string())
-
-        // match subject {
-        //     Self::Directive(directive) => Directive::gen(directive),
-        //     _ => todo!(),
-        // }
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::Labeled(subject, predicate_object_list) => Box::new(cf_tuple((
+                Subject::gen(subject),
+                cf_string(" "),
+                PredicateObjectList::gen(predicate_object_list),
+            ))),
+            #[allow(unreachable_patterns)]
+            _ => todo!(),
+        }
     }
 }
 
@@ -222,6 +224,14 @@ impl<'a> PredicateObjectList<'a> {
             },
         )(input)
     }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            IRI::gen(&subject.verb),
+            cf_string(" "),
+            ObjectList::gen(&subject.object_list),
+        ))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -249,11 +259,19 @@ impl<'a> ObjectList<'a> {
             },
         )(input)
     }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_separated_list(cf_string(" , "), subject.list.iter().map(Object::gen))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Object<'a> {
-    IRI(IRI<'a>), // TODO: more variants
+    IRI(IRI<'a>),
+    // TODO: BlankNode
+    // TODO: collection
+    // TODO: blankNodePropertyList
+    Literal(Literal<'a>),
 }
 
 impl<'a> Object<'a> {
@@ -261,7 +279,17 @@ impl<'a> Object<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(IRI::parse, Self::IRI)(input)
+        alt((
+            map(IRI::parse, Self::IRI),
+            map(Literal::parse, Self::Literal),
+        ))(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::IRI(iri) => Box::new(IRI::gen(iri)),
+            Self::Literal(literal) => Box::new(Literal::gen(literal)),
+        }
     }
 }
 
@@ -531,6 +559,94 @@ impl<'a> PrefixedName<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Literal<'a> {
+    RDFLiteral(RDFLiteral<'a>),
+    // NumericLiteral(NumericLiteral<'a>),
+    // BooleanLiteral(BooleanLiteral<'a>),
+}
+
+impl<'a> Literal<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(RDFLiteral::parse, Self::RDFLiteral)(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::RDFLiteral(literal) => Box::new(RDFLiteral::gen(literal)),
+            #[allow(unreachable_patterns)]
+            _ => todo!(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RDFLiteral<'a> {
+    string: TurtleString<'a>,
+    // TODO: language_tag or IRI (for datatype?)
+}
+
+impl<'a> RDFLiteral<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(TurtleString::parse, |string| Self { string })(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        TurtleString::gen(&subject.string)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TurtleString<'a> {
+    StringLiteralQuote(StringLiteralQuote<'a>),
+    // TODO: other quoting variants
+}
+
+impl<'a> TurtleString<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(StringLiteralQuote::parse, Self::StringLiteralQuote)(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::StringLiteralQuote(string) => Box::new(StringLiteralQuote::gen(string)),
+            #[allow(unreachable_patterns)]
+            _ => todo!(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct StringLiteralQuote<'a> {
+    string: Cow<'a, str>,
+}
+
+impl<'a> StringLiteralQuote<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(delimited(char('\"'), is_not("\""), char('\"')), |string| {
+            Self {
+                string: Cow::Borrowed(string),
+            }
+        })(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((cf_string("\""), cf_string(&subject.string), cf_string("\"")))
+    }
+}
+
 fn gen_option_cow_str<'a, W: Write + 'a>(
     prefix: &'a Option<Cow<str>>,
 ) -> Box<dyn SerializeFn<W> + 'a> {
@@ -543,9 +659,7 @@ fn gen_option_cow_str<'a, W: Write + 'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cookie_factory::gen_simple;
     use nom::error::VerboseError;
-    use std::io::Cursor;
 
     #[test]
     fn parse_iri_reference() {
@@ -741,6 +855,19 @@ mod tests {
             Triples::parse::<VerboseError<&str>>(include_str!(
                 "../tests/reference_examples/example2.ttl"
             ))
+        );
+    }
+
+    #[test]
+    fn parse_string_literal_quote() {
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralQuote {
+                    string: Cow::Borrowed("SomeString"),
+                }
+            )),
+            StringLiteralQuote::parse::<VerboseError<&str>>("\"SomeString\"")
         );
     }
 
