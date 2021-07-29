@@ -8,7 +8,7 @@ use cookie_factory::SerializeFn;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag};
 use nom::character::complete::{char, multispace1};
-use nom::combinator::{map, map_res, opt};
+use nom::combinator::{map, opt};
 use nom::error::{FromExternalError, ParseError};
 use nom::multi::many1;
 use nom::sequence::{delimited, tuple};
@@ -98,10 +98,10 @@ impl<'a> Comment<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map_res(Self::parse_raw, |comment_raw: &'a str| {
+        map(Self::parse_raw, |comment_raw: &'a str| {
             let comment = Cow::Borrowed(comment_raw);
 
-            Ok(Self { comment })
+            Self { comment }
         })(input)
     }
 
@@ -131,9 +131,9 @@ impl<'a> Triples<'a> {
     {
         map(
             tuple((
-                map_res(
+                map(
                     tuple((Subject::parse, multispace1, PredicateObjectList::parse)),
-                    |(subject, _, list)| Ok(Self::Labeled(subject, list)),
+                    |(subject, _, list)| Self::Labeled(subject, list),
                 ),
                 multispace1,
                 char('.'),
@@ -312,6 +312,8 @@ impl<'a> Directive<'a> {
         alt((
             map(BaseDirective::parse, Self::Base),
             map(PrefixDirective::parse, Self::Prefix),
+            map(SparqlBaseDirective::parse, Self::SparqlBase),
+            map(SparqlPrefixDirective::parse, Self::SparqlPrefix),
         ))(input)
     }
 
@@ -338,7 +340,7 @@ impl<'a> BaseDirective<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map_res(Self::parse_raw, |iri_ref| Ok(Self { iri: iri_ref }))(input)
+        map(Self::parse_raw, |iri_ref| Self { iri: iri_ref })(input)
     }
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, IRIReference, E>
@@ -376,7 +378,7 @@ impl<'a> SparqlBaseDirective<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map_res(Self::parse_raw, |iri_ref| Ok(Self { iri: iri_ref }))(input)
+        map(Self::parse_raw, |iri_ref| Self { iri: iri_ref })(input)
     }
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, IRIReference, E>
@@ -410,11 +412,9 @@ impl<'a> PrefixDirective<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map_res(Self::parse_raw, |(prefix, iri_ref)| {
-            Ok(Self {
-                prefix: prefix.map(|n| Cow::Borrowed(n)),
-                iri: iri_ref,
-            })
+        map(Self::parse_raw, |(prefix, iri_ref)| Self {
+            prefix: prefix.map(|n| Cow::Borrowed(n)),
+            iri: iri_ref,
         })(input)
     }
 
@@ -460,11 +460,9 @@ impl<'a> SparqlPrefixDirective<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map_res(Self::parse_raw, |(prefix, iri_ref)| {
-            Ok(Self {
-                prefix: prefix.map(|n| Cow::Borrowed(n)),
-                iri: iri_ref,
-            })
+        map(Self::parse_raw, |(prefix, iri_ref)| Self {
+            prefix: prefix.map(|n| Cow::Borrowed(n)),
+            iri: iri_ref,
         })(input)
     }
 
@@ -510,10 +508,10 @@ impl<'a> IRIReference<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map_res(Self::parse_raw, |iri: &'a str| {
+        map(Self::parse_raw, |iri: &'a str| {
             let iri_utf8 = Cow::Borrowed(iri);
 
-            Ok(Self { iri: iri_utf8 })
+            Self { iri: iri_utf8 }
         })(input)
     }
 

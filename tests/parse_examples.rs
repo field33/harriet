@@ -4,7 +4,7 @@ use nom::error::VerboseError;
 fn parse_example_file(file_name: &str) {
     let ontology =
         std::fs::read_to_string(&format!("./tests/reference_examples/{}", file_name)).unwrap();
-    assert!(TurtleDocument::parse::<VerboseError<&str>>(&ontology)
+    assert!(dbg!(TurtleDocument::parse::<VerboseError<&str>>(&ontology))
         .unwrap()
         .0
         .is_empty());
@@ -49,7 +49,6 @@ fn example7() {
 }
 
 #[test]
-#[ignore]
 fn example8() {
     parse_example_file("example8.ttl");
 }
@@ -61,7 +60,6 @@ fn example9() {
 }
 
 #[test]
-#[ignore]
 fn example10() {
     parse_example_file("example10.ttl");
 }
