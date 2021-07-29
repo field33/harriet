@@ -561,7 +561,7 @@ impl<'a> PrefixedName<'a> {
 pub enum Literal<'a> {
     RDFLiteral(RDFLiteral<'a>),
     // NumericLiteral(NumericLiteral<'a>),
-    // BooleanLiteral(BooleanLiteral<'a>),
+    BooleanLiteral(BooleanLiteral),
 }
 
 impl<'a> Literal<'a> {
@@ -569,12 +569,16 @@ impl<'a> Literal<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(RDFLiteral::parse, Self::RDFLiteral)(input)
+        alt((
+            map(RDFLiteral::parse, Self::RDFLiteral),
+            map(BooleanLiteral::parse, Self::BooleanLiteral),
+        ))(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
             Self::RDFLiteral(literal) => Box::new(RDFLiteral::gen(literal)),
+            Self::BooleanLiteral(bool) => Box::new(BooleanLiteral::gen(bool)),
             #[allow(unreachable_patterns)]
             _ => todo!(),
         }
@@ -597,6 +601,30 @@ impl<'a> RDFLiteral<'a> {
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         TurtleString::gen(&subject.string)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct BooleanLiteral {
+    bool: bool,
+}
+
+impl BooleanLiteral {
+    fn parse<'a, E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        alt((
+            map(tag("true"), |_| Self { bool: true }),
+            map(tag("false"), |_| Self { bool: false }),
+        ))(input)
+    }
+
+    fn gen<'a, W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self { bool: true } => Box::new(cf_string("true")),
+            Self { bool: false } => Box::new(cf_string("false")),
+        }
     }
 }
 
