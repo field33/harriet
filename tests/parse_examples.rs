@@ -63,3 +63,57 @@ fn example9() {
 fn example10() {
     parse_example_file("example10.ttl");
 }
+
+#[test]
+#[ignore]
+fn example11() {
+    parse_example_file("example11.ttl");
+}
+
+#[test]
+#[ignore]
+fn example12() {
+    parse_example_file("example12.ttl");
+}
+
+#[test]
+#[ignore]
+fn example13() {
+    parse_example_file("example13.ttl");
+}
+
+#[test]
+#[ignore]
+fn example14() {
+    parse_example_file("example14.ttl");
+}
+
+#[test]
+#[ignore]
+fn example15() {
+    parse_example_file("example15.ttl");
+}
+
+#[test]
+#[ignore]
+fn example16() {
+    parse_example_file("example16.ttl");
+}
+
+#[test]
+#[ignore]
+fn example17() {
+    parse_example_file("example17.ttl");
+}
+
+#[test]
+#[ignore]
+fn example18() {
+    parse_example_file("example18.ttl");
+}
+
+#[test]
+#[ignore]
+fn example19() {
+    parse_example_file("example19.ttl");
+}
