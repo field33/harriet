@@ -10,7 +10,7 @@ use nom::bytes::complete::{is_not, tag};
 use nom::character::complete::{char, multispace1};
 use nom::combinator::{map, opt};
 use nom::error::{FromExternalError, ParseError};
-use nom::multi::many1;
+use nom::multi::{many1, separated_list1};
 use nom::sequence::{delimited, tuple};
 use nom::IResult;
 use std::borrow::Cow;
@@ -206,9 +206,8 @@ impl<'a> IRI<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PredicateObjectList<'a> {
-    // TODO: should be "Verb" - Enum between IRI and literal "a"
-    pub verb: IRI<'a>,
-    pub object_list: ObjectList<'a>,
+    // TODO: IRI should be "Verb" - Enum between IRI and literal "a"
+    pub list: Vec<(IRI<'a>, ObjectList<'a>)>,
 }
 
 impl<'a> PredicateObjectList<'a> {
@@ -217,20 +216,24 @@ impl<'a> PredicateObjectList<'a> {
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
-            tuple((IRI::parse, multispace1, ObjectList::parse)),
-            |(verb, _, list)| Self {
-                verb,
-                object_list: list,
-            },
+            separated_list1(
+                tuple((multispace1, tag(";"), multispace1)),
+                map(
+                    tuple((IRI::parse, multispace1, ObjectList::parse)),
+                    |(verb, _, list)| (verb, list),
+                ),
+            ),
+            |list| Self { list },
         )(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
-        cf_tuple((
-            IRI::gen(&subject.verb),
-            cf_string(" "),
-            ObjectList::gen(&subject.object_list),
-        ))
+        cf_separated_list(
+            cf_string(" ; "),
+            subject.list.iter().map(|(verb, object_list)| {
+                cf_tuple((IRI::gen(verb), cf_string(" "), ObjectList::gen(object_list)))
+            }),
+        )
     }
 }
 
@@ -865,16 +868,18 @@ mod tests {
                         iri: Cow::Borrowed("http://example.org/#spiderman")
                     })),
                     PredicateObjectList {
-                        verb: IRI::IRIReference(IRIReference {
-                            iri: Cow::Borrowed(
-                                "http://www.perceive.net/schemas/relationship/enemyOf"
-                            )
-                        }),
-                        object_list: ObjectList {
-                            list: vec![Object::IRI(IRI::IRIReference(IRIReference {
-                                iri: Cow::Borrowed("http://example.org/#green-goblin")
-                            }))]
-                        }
+                        list: vec![(
+                            IRI::IRIReference(IRIReference {
+                                iri: Cow::Borrowed(
+                                    "http://www.perceive.net/schemas/relationship/enemyOf"
+                                )
+                            }),
+                            ObjectList {
+                                list: vec![Object::IRI(IRI::IRIReference(IRIReference {
+                                    iri: Cow::Borrowed("http://example.org/#green-goblin")
+                                }))]
+                            }
+                        )]
                     }
                 )
             )),
