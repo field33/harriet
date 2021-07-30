@@ -17,7 +17,7 @@ use std::borrow::Cow;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TurtleDocument<'a> {
-    items: Vec<Item<'a>>,
+    pub items: Vec<Item<'a>>,
 }
 
 impl<'a> TurtleDocument<'a> {
@@ -90,7 +90,7 @@ impl<'a> Statement<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Comment<'a> {
-    comment: Cow<'a, str>,
+    pub comment: Cow<'a, str>,
 }
 
 impl<'a> Comment<'a> {
@@ -207,8 +207,8 @@ impl<'a> IRI<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PredicateObjectList<'a> {
     // TODO: should be "Verb" - Enum between IRI and literal "a"
-    verb: IRI<'a>,
-    object_list: ObjectList<'a>,
+    pub verb: IRI<'a>,
+    pub object_list: ObjectList<'a>,
 }
 
 impl<'a> PredicateObjectList<'a> {
@@ -236,7 +236,7 @@ impl<'a> PredicateObjectList<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ObjectList<'a> {
-    list: Vec<Object<'a>>,
+    pub list: Vec<Object<'a>>,
 }
 
 impl<'a> ObjectList<'a> {
@@ -332,7 +332,7 @@ impl<'a> Directive<'a> {
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-base>
 #[derive(Debug, Eq, PartialEq)]
 pub struct BaseDirective<'a> {
-    iri: IRIReference<'a>,
+    pub iri: IRIReference<'a>,
 }
 
 impl<'a> BaseDirective<'a> {
@@ -370,7 +370,7 @@ impl<'a> BaseDirective<'a> {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SparqlBaseDirective<'a> {
-    iri: IRIReference<'a>,
+    pub iri: IRIReference<'a>,
 }
 
 impl<'a> SparqlBaseDirective<'a> {
@@ -403,8 +403,8 @@ impl<'a> SparqlBaseDirective<'a> {
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-prefixID>
 #[derive(Debug, Eq, PartialEq)]
 pub struct PrefixDirective<'a> {
-    prefix: Option<Cow<'a, str>>,
-    iri: IRIReference<'a>,
+    pub prefix: Option<Cow<'a, str>>,
+    pub iri: IRIReference<'a>,
 }
 
 impl<'a> PrefixDirective<'a> {
@@ -451,8 +451,8 @@ impl<'a> PrefixDirective<'a> {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SparqlPrefixDirective<'a> {
-    prefix: Option<Cow<'a, str>>,
-    iri: IRIReference<'a>,
+    pub prefix: Option<Cow<'a, str>>,
+    pub iri: IRIReference<'a>,
 }
 
 impl<'a> SparqlPrefixDirective<'a> {
@@ -500,7 +500,7 @@ impl<'a> SparqlPrefixDirective<'a> {
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-IRIREF>
 #[derive(Debug, Eq, PartialEq)]
 pub struct IRIReference<'a> {
-    iri: Cow<'a, str>,
+    pub iri: Cow<'a, str>,
 }
 
 impl<'a> IRIReference<'a> {
@@ -529,8 +529,8 @@ impl<'a> IRIReference<'a> {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct PrefixedName<'a> {
-    prefix: Option<Cow<'a, str>>,
-    name: Option<Cow<'a, str>>,
+    pub prefix: Option<Cow<'a, str>>,
+    pub name: Option<Cow<'a, str>>,
     // TODO: locale
 }
 
@@ -587,7 +587,7 @@ impl<'a> Literal<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RDFLiteral<'a> {
-    string: TurtleString<'a>,
+    pub string: TurtleString<'a>,
     // TODO: language_tag or IRI (for datatype?)
 }
 
@@ -606,7 +606,7 @@ impl<'a> RDFLiteral<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct BooleanLiteral {
-    bool: bool,
+    pub bool: bool,
 }
 
 impl BooleanLiteral {
@@ -653,7 +653,7 @@ impl<'a> TurtleString<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct StringLiteralQuote<'a> {
-    string: Cow<'a, str>,
+    pub string: Cow<'a, str>,
 }
 
 impl<'a> StringLiteralQuote<'a> {
