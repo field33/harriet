@@ -148,6 +148,7 @@ impl<'a> Triples<'a> {
                 Subject::gen(subject),
                 cf_string(" "),
                 PredicateObjectList::gen(predicate_object_list),
+                cf_string(" ."),
             ))),
             #[allow(unreachable_patterns)]
             _ => todo!(),
@@ -930,6 +931,39 @@ mod tests {
                 }
             )),
             RDFLiteral::parse::<VerboseError<&str>>("\"SomeString\"@en")
+        );
+    }
+
+    #[test]
+    fn render_triples() {
+        let mut mem: [u8; 1024] = [0; 1024];
+        let buf = &mut mem[..];
+        let (_, written_bytes) = cookie_factory::gen(
+            Triples::gen(&Triples::Labeled(
+                Subject::IRI(IRI::IRIReference(IRIReference {
+                    iri: Cow::Borrowed("http://example.com/"),
+                })),
+                PredicateObjectList {
+                    list: vec![(
+                        IRI::PrefixedName(PrefixedName {
+                            prefix: Some(Cow::Borrowed("rdf")),
+                            name: Some(Cow::Borrowed("type")),
+                        }),
+                        ObjectList {
+                            list: vec![Object::IRI(IRI::PrefixedName(PrefixedName {
+                                prefix: Some(Cow::Borrowed("owl")),
+                                name: Some(Cow::Borrowed("Ontology")),
+                            }))],
+                        },
+                    )],
+                },
+            )),
+            buf,
+        )
+        .unwrap();
+        assert_eq!(
+            r#"<http://example.com/> rdf:type owl:Ontology ."#,
+            std::str::from_utf8(&mem[..written_bytes as usize]).unwrap()
         );
     }
 
