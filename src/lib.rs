@@ -7,7 +7,7 @@ use cookie_factory::sequence::tuple as cf_tuple;
 use cookie_factory::SerializeFn;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag};
-use nom::character::complete::{char, multispace1};
+use nom::character::complete::{alphanumeric1, char, multispace0, multispace1};
 use nom::combinator::{map, opt};
 use nom::error::{FromExternalError, ParseError};
 use nom::multi::{many1, separated_list1};
@@ -253,7 +253,7 @@ impl<'a> ObjectList<'a> {
                 map(Object::parse, Some),
                 // Subsequent items delimited by whitespace and ','
                 map(
-                    tuple((multispace1, char(','), multispace1, Object::parse)),
+                    tuple((multispace0, char(','), multispace0, Object::parse)),
                     |(_, _, _, object)| Some(object),
                 ),
             ))),
@@ -591,6 +591,7 @@ impl<'a> Literal<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct RDFLiteral<'a> {
     pub string: TurtleString<'a>,
+    pub language_tag: Option<Cow<'a, str>>,
     // TODO: language_tag or IRI (for datatype?)
 }
 
@@ -599,7 +600,21 @@ impl<'a> RDFLiteral<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(TurtleString::parse, |string| Self { string })(input)
+        map(
+            tuple((
+                TurtleString::parse,
+                map(
+                    opt(tuple((char('@'), alphanumeric1))),
+                    |language_tag_tuple| {
+                        language_tag_tuple.map(|(_, language_tag)| Cow::Borrowed(language_tag))
+                    },
+                ),
+            )),
+            |(string, language_tag)| Self {
+                string,
+                language_tag,
+            },
+        )(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -899,6 +914,22 @@ mod tests {
                 }
             )),
             StringLiteralQuote::parse::<VerboseError<&str>>("\"SomeString\"")
+        );
+    }
+
+    #[test]
+    fn parse_rdf_literal() {
+        assert_eq!(
+            Ok((
+                "",
+                RDFLiteral {
+                    string: TurtleString::StringLiteralQuote(StringLiteralQuote {
+                        string: Cow::Borrowed("SomeString"),
+                    }),
+                    language_tag: Some(Cow::Borrowed("en")),
+                }
+            )),
+            RDFLiteral::parse::<VerboseError<&str>>("\"SomeString\"@en")
         );
     }
 

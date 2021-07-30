@@ -11,6 +11,7 @@ fn parse_example_file(file_name: &str) {
 }
 #[test]
 #[ignore]
+// TODO: There is a comment in the middle of a statement (build custom parser for whitespace, and start treating comments as whitespace)
 fn example1() {
     parse_example_file("example1.ttl");
 }
@@ -31,13 +32,11 @@ fn example4() {
 }
 
 #[test]
-#[ignore]
 fn example5() {
     parse_example_file("example5.ttl");
 }
 
 #[test]
-#[ignore]
 fn example6() {
     parse_example_file("example6.ttl");
 }
