@@ -6,12 +6,12 @@ use cookie_factory::multi::separated_list as cf_separated_list;
 use cookie_factory::sequence::tuple as cf_tuple;
 use cookie_factory::SerializeFn;
 use nom::branch::alt;
-use nom::bytes::complete::{is_not, tag};
-use nom::character::complete::{alphanumeric1, char, multispace0, multispace1};
-use nom::combinator::{map, opt};
+use nom::bytes::complete::{escaped_transform, is_not, tag};
+use nom::character::complete::{alphanumeric1, char, multispace0, multispace1, satisfy};
+use nom::combinator::{map, opt, value};
 use nom::error::{FromExternalError, ParseError};
 use nom::multi::{many1, separated_list1};
-use nom::sequence::{delimited, tuple};
+use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom::IResult;
 use std::borrow::Cow;
 
@@ -680,11 +680,32 @@ impl<'a> StringLiteralQuote<'a> {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(delimited(char('\"'), is_not("\""), char('\"')), |string| {
-            Self {
-                string: Cow::Borrowed(string),
-            }
+        map(Self::parse_str, |string| Self {
+            string: Cow::Owned(string),
         })(input)
+    }
+
+    fn parse_str<E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, String, E> {
+        preceded(
+            char('\"'),
+            terminated(
+                // Inner string
+                escaped_transform(
+                    satisfy(|c| {
+                        c.is_alphanumeric()
+                            || c.is_whitespace()
+                            || (c.is_ascii_punctuation() && c != '"' && c != '\\')
+                    }),
+                    '\\',
+                    alt((
+                        value("\\", tag("\\")),
+                        value("\"", tag("\"")),
+                        value("\n", tag("\n")),
+                    )),
+                ),
+                char('\"'),
+            ),
+        )(i)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -914,7 +935,17 @@ mod tests {
                     string: Cow::Borrowed("SomeString"),
                 }
             )),
-            StringLiteralQuote::parse::<VerboseError<&str>>("\"SomeString\"")
+            StringLiteralQuote::parse::<VerboseError<&str>>(r#""SomeString""#)
+        );
+        // Quote in quote
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralQuote {
+                    string: Cow::Borrowed(r#"Dwayne "The Rock" Johnson"#),
+                }
+            )),
+            StringLiteralQuote::parse::<VerboseError<&str>>(r#""Dwayne \"The Rock\" Johnson""#)
         );
     }
 
