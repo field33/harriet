@@ -1,5 +1,4 @@
-use harriet::TurtleDocument;
-use nom::error::VerboseError;
+use harriet::{ParseError, TurtleDocument};
 
 pub fn main() {
     let ontology = std::fs::read_to_string(
@@ -8,5 +7,15 @@ pub fn main() {
             .expect("Expected path to .ttl file as first argument"),
     )
     .unwrap();
-    dbg!(TurtleDocument::parse::<VerboseError<&str>>(&ontology)).unwrap();
+    let result = TurtleDocument::parse_full(&ontology);
+    if let Err(ParseError::NotFullyParsed(remainder)) = result {
+        dbg!(remainder);
+        println!("=======================================");
+        println!("================= WARNING =============");
+        println!("=======================================");
+        println!("=== file has not been parsed to end ===");
+        println!("=======================================");
+        std::process::exit(1);
+    }
+    dbg!(result);
 }

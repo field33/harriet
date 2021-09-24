@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::ParseError::NotFullyParsed;
 use cookie_factory::combinator::string as cf_string;
 use cookie_factory::lib::std::io::Write;
 use cookie_factory::multi::separated_list as cf_separated_list;
@@ -9,21 +10,37 @@ use nom::branch::alt;
 use nom::bytes::complete::{escaped_transform, is_not, tag};
 use nom::character::complete::{alphanumeric1, char, multispace0, multispace1, satisfy};
 use nom::combinator::{map, opt, value};
-use nom::error::{FromExternalError, ParseError};
+use nom::error::{FromExternalError, ParseError as NomParseError, VerboseError};
 use nom::multi::{many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom::IResult;
 use std::borrow::Cow;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TurtleDocument<'a> {
     pub items: Vec<Item<'a>>,
 }
 
+#[derive(Debug)]
+pub enum ParseError<'a> {
+    ParseError(nom::Err<VerboseError<&'a str>>),
+    NotFullyParsed(&'a str),
+}
+
 impl<'a> TurtleDocument<'a> {
+    pub fn parse_full(input: &'a str) -> Result<Self, ParseError> {
+        let (remaining, document) =
+            TurtleDocument::parse::<VerboseError<&str>>(input).map_err(ParseError::ParseError)?;
+        if !remaining.is_empty() {
+            return Err(NotFullyParsed(remaining));
+        }
+        return Ok(document);
+    }
+
     pub fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
             many1(alt((map(Item::parse, Some), map(multispace1, |_| None)))),
@@ -38,6 +55,21 @@ impl<'a> TurtleDocument<'a> {
     }
 }
 
+impl ToString for TurtleDocument<'_> {
+    fn to_string(&self) -> String {
+        let mut buf = Cursor::new(Vec::new());
+
+        cookie_factory::gen(TurtleDocument::gen(&self), &mut buf)
+            .expect("Unable to write TurtleDocument to buffer.");
+        buf.seek(SeekFrom::Start(0)).unwrap();
+
+        let mut out = Vec::new();
+        buf.read_to_end(&mut out).unwrap();
+
+        std::str::from_utf8(&out).unwrap().to_owned()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Item<'a> {
     Statement(Statement<'a>),
@@ -47,7 +79,7 @@ pub enum Item<'a> {
 impl<'a> Item<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
             map(Comment::parse, Item::Comment),
@@ -72,7 +104,7 @@ pub enum Statement<'a> {
 impl<'a> Statement<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
             map(Directive::parse, Self::Directive),
@@ -96,7 +128,7 @@ pub struct Comment<'a> {
 impl<'a> Comment<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_raw, |comment_raw: &'a str| {
             let comment = Cow::Borrowed(comment_raw);
@@ -107,7 +139,7 @@ impl<'a> Comment<'a> {
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, &str, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         delimited(char('#'), is_not("\n"), char('\n'))(input)
     }
@@ -127,7 +159,7 @@ pub enum Triples<'a> {
 impl<'a> Triples<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
             tuple((
@@ -166,7 +198,7 @@ pub enum Subject<'a> {
 impl<'a> Subject<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(IRI::parse, Self::IRI)(input)
     }
@@ -189,7 +221,7 @@ pub enum IRI<'a> {
 impl<'a> IRI<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
             map(IRIReference::parse, Self::IRIReference),
@@ -214,7 +246,7 @@ pub struct PredicateObjectList<'a> {
 impl<'a> PredicateObjectList<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
             separated_list1(
@@ -246,7 +278,7 @@ pub struct ObjectList<'a> {
 impl<'a> ObjectList<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
             many1(alt((
@@ -281,7 +313,7 @@ pub enum Object<'a> {
 impl<'a> Object<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
             map(IRI::parse, Self::IRI),
@@ -311,7 +343,7 @@ pub enum Directive<'a> {
 impl<'a> Directive<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
             map(BaseDirective::parse, Self::Base),
@@ -342,14 +374,14 @@ pub struct BaseDirective<'a> {
 impl<'a> BaseDirective<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_raw, |iri_ref| Self { iri: iri_ref })(input)
     }
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, IRIReference, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         tuple((
             tag("@base"),
@@ -380,14 +412,14 @@ pub struct SparqlBaseDirective<'a> {
 impl<'a> SparqlBaseDirective<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_raw, |iri_ref| Self { iri: iri_ref })(input)
     }
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, IRIReference, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         tuple((tag("BASE"), multispace1, IRIReference::parse))(input)
             .map(|(remainder, (_, _, iri))| (remainder, iri))
@@ -414,7 +446,7 @@ pub struct PrefixDirective<'a> {
 impl<'a> PrefixDirective<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_raw, |(prefix, iri_ref)| Self {
             prefix: prefix.map(|n| Cow::Borrowed(n)),
@@ -424,7 +456,7 @@ impl<'a> PrefixDirective<'a> {
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<&'a str>, IRIReference), E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         tuple((
             tag("@prefix"),
@@ -462,7 +494,7 @@ pub struct SparqlPrefixDirective<'a> {
 impl<'a> SparqlPrefixDirective<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_raw, |(prefix, iri_ref)| Self {
             prefix: prefix.map(|n| Cow::Borrowed(n)),
@@ -472,7 +504,7 @@ impl<'a> SparqlPrefixDirective<'a> {
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<&'a str>, IRIReference), E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         tuple((
             tag("PREFIX"),
@@ -510,7 +542,7 @@ pub struct IRIReference<'a> {
 impl<'a> IRIReference<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_raw, |iri: &'a str| {
             let iri_utf8 = Cow::Borrowed(iri);
@@ -521,7 +553,7 @@ impl<'a> IRIReference<'a> {
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, &'a str, E>
     where
-        E: ParseError<&'a str>,
+        E: NomParseError<&'a str>,
     {
         delimited(char('<'), is_not(">"), char('>'))(input)
     }
@@ -541,7 +573,7 @@ pub struct PrefixedName<'a> {
 impl<'a> PrefixedName<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
             tuple((opt(is_not(" \t\r\n:")), char(':'), opt(is_not(" \t\r\n")))),
@@ -571,7 +603,7 @@ pub enum Literal<'a> {
 impl<'a> Literal<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
             map(RDFLiteral::parse, Self::RDFLiteral),
@@ -599,7 +631,7 @@ pub struct RDFLiteral<'a> {
 impl<'a> RDFLiteral<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
             tuple((
@@ -631,7 +663,7 @@ pub struct BooleanLiteral {
 impl BooleanLiteral {
     fn parse<'a, E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
             map(tag("true"), |_| Self { bool: true }),
@@ -656,7 +688,7 @@ pub enum TurtleString<'a> {
 impl<'a> TurtleString<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(StringLiteralQuote::parse, Self::StringLiteralQuote)(input)
     }
@@ -678,14 +710,14 @@ pub struct StringLiteralQuote<'a> {
 impl<'a> StringLiteralQuote<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
-        E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_str, |string| Self {
             string: Cow::Owned(string),
         })(input)
     }
 
-    fn parse_str<E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, String, E> {
+    fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, String, E> {
         preceded(
             char('\"'),
             terminated(
