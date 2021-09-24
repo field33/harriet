@@ -9,7 +9,7 @@ use cookie_factory::SerializeFn;
 use nom::branch::alt;
 use nom::bytes::complete::{escaped_transform, is_not, tag};
 use nom::character::complete::{alphanumeric1, char, multispace0, multispace1, satisfy};
-use nom::combinator::{map, opt, value};
+use nom::combinator::{map, map_parser, opt, value};
 use nom::error::{FromExternalError, ParseError as NomParseError, VerboseError};
 use nom::multi::{many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
@@ -192,7 +192,7 @@ impl<'a> Triples<'a> {
 pub enum Subject<'a> {
     IRI(IRI<'a>),
     // TOOD: BlankNode
-    // TOOD: Collection
+    Collection(Collection<'a>),
 }
 
 impl<'a> Subject<'a> {
@@ -200,14 +200,16 @@ impl<'a> Subject<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(IRI::parse, Self::IRI)(input)
+        alt((
+            map(IRI::parse, Self::IRI),
+            map(Collection::parse, Self::Collection),
+        ))(input)
     }
 
-    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
-            Self::IRI(iri) => IRI::gen(iri),
-            #[allow(unreachable_patterns)]
-            _ => todo!(),
+            Self::IRI(iri) => Box::new(IRI::gen(iri)),
+            Self::Collection(collection) => Box::new(Collection::gen(collection)),
         }
     }
 }
@@ -271,6 +273,42 @@ impl<'a> PredicateObjectList<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct BlankNodePropertyList<'a> {
+    pub list: PredicateObjectList<'a>,
+}
+
+impl<'a> BlankNodePropertyList<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            map_parser(Self::parse_parens, PredicateObjectList::parse),
+            |list| Self { list },
+        )(input)
+    }
+
+    fn parse_parens<E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+    where
+        E: NomParseError<&'a str>,
+    {
+        delimited(
+            tuple((char('['), multispace0)),
+            is_not("]"),
+            tuple((multispace0, char(']'))),
+        )(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            cf_string("[\n"),
+            PredicateObjectList::gen(&subject.list),
+            cf_string("]"),
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct ObjectList<'a> {
     pub list: Vec<Object<'a>>,
 }
@@ -305,8 +343,8 @@ impl<'a> ObjectList<'a> {
 pub enum Object<'a> {
     IRI(IRI<'a>),
     // TODO: BlankNode
-    // TODO: collection
-    // TODO: blankNodePropertyList
+    Collection(Collection<'a>),
+    BlankNodePropertyList(BlankNodePropertyList<'a>),
     Literal(Literal<'a>),
 }
 
@@ -317,6 +355,8 @@ impl<'a> Object<'a> {
     {
         alt((
             map(IRI::parse, Self::IRI),
+            map(Collection::parse, Self::Collection),
+            map(BlankNodePropertyList::parse, Self::BlankNodePropertyList),
             map(Literal::parse, Self::Literal),
         ))(input)
     }
@@ -324,8 +364,51 @@ impl<'a> Object<'a> {
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
             Self::IRI(iri) => Box::new(IRI::gen(iri)),
+            Self::Collection(collection) => Box::new(Collection::gen(collection)),
+            Self::BlankNodePropertyList(list) => Box::new(BlankNodePropertyList::gen(list)),
             Self::Literal(literal) => Box::new(Literal::gen(literal)),
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Collection<'a> {
+    pub list: Vec<Object<'a>>,
+}
+
+impl<'a> Collection<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map_parser(
+            Self::parse_parens,
+            map(separated_list1(multispace1, Object::parse), |list| Self {
+                list,
+            }),
+        )(input)
+    }
+
+    fn parse_parens<E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+    where
+        E: NomParseError<&'a str>,
+    {
+        delimited(
+            tuple((char('('), multispace0)),
+            is_not(")"),
+            tuple((multispace0, char(')'))),
+        )(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            cf_string("("),
+            cf_separated_list(
+                cf_string(" "),
+                subject.list.iter().map(|object| Object::gen(object)),
+            ),
+            cf_string(")"),
+        ))
     }
 }
 
@@ -897,6 +980,85 @@ mod tests {
             PrefixDirective::parse::<VerboseError<&str>>(
                 "@prefix : <http://example.com/ontology> ."
             )
+        );
+    }
+
+    #[test]
+    fn parse_collection() {
+        assert_eq!(
+            Ok((
+                "",
+                Collection {
+                    list: vec![
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity1".into())
+                        })),
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity2".into())
+                        })),
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity3".into())
+                        }))
+                    ]
+                }
+            )),
+            Collection::parse::<VerboseError<&str>>("(:Entity1 :Entity2 :Entity3)")
+        );
+        // Some whitespace
+        assert_eq!(
+            Ok((
+                "",
+                Collection {
+                    list: vec![
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity1".into())
+                        })),
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity2".into())
+                        })),
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity3".into())
+                        }))
+                    ]
+                }
+            )),
+            Collection::parse::<VerboseError<&str>>("( :Entity1 \n:Entity2 :Entity3 )")
+        );
+    }
+
+    #[test]
+    fn render_collection() {
+        let mut mem: [u8; 1024] = [0; 1024];
+        let buf = &mut mem[..];
+        let (_, written_bytes) = cookie_factory::gen(
+            Collection::gen(&Collection {
+                list: vec![
+                    Object::IRI(IRI::PrefixedName(PrefixedName {
+                        prefix: None,
+                        name: Some("Entity1".into()),
+                    })),
+                    Object::IRI(IRI::PrefixedName(PrefixedName {
+                        prefix: None,
+                        name: Some("Entity2".into()),
+                    })),
+                    Object::IRI(IRI::PrefixedName(PrefixedName {
+                        prefix: None,
+                        name: Some("Entity3".into()),
+                    })),
+                ],
+            }),
+            buf,
+        )
+        .unwrap();
+        assert_eq!(
+            r#"(:Entity1 :Entity2 :Entity3)"#,
+            std::str::from_utf8(&mem[..written_bytes as usize]).unwrap()
         );
     }
 
