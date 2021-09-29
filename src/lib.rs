@@ -659,9 +659,15 @@ impl<'a> PrefixedName<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
-            tuple((opt(is_not(" \t\r\n:")), char(':'), opt(is_not(" \t\r\n")))),
+            tuple((
+                // TODO: proper order instead of just is_pn_chars
+                // (there are restrictions for first and last character)
+                opt(many1(satisfy(Self::is_pn_chars))),
+                char(':'),
+                opt(is_not(" \t\r\n")),
+            )),
             |(prefix, _, name)| Self {
-                prefix: prefix.map(Cow::Borrowed),
+                prefix: prefix.map(|chars| Cow::Owned(chars.into_iter().collect())),
                 name: name.map(Cow::Borrowed),
             },
         )(input)
@@ -673,6 +679,42 @@ impl<'a> PrefixedName<'a> {
             cf_string(":"),
             gen_option_cow_str(&subject.name),
         ))
+    }
+
+    // [163s] 	PN_CHARS_BASE 	::= 	[A-Z] | [a-z] | [#x00C0-#x00D6] | [#x00D8-#x00F6] | [#x00F8-#x02FF] | [#x0370-#x037D] | [#x037F-#x1FFF] | [#x200C-#x200D] | [#x2070-#x218F] | [#x2C00-#x2FEF] | [#x3001-#xD7FF] | [#xF900-#xFDCF] | [#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
+    fn is_pn_chars_base(khar: char) -> bool {
+        matches!(khar,
+        'A'..='Z'
+        | 'a'..='z'
+        | '\u{00C0}'..='\u{00D6}'
+        | '\u{00D8}'..='\u{00F6}'
+        | '\u{00F8}'..='\u{02FF}'
+        | '\u{0370}'..='\u{037D}'
+        | '\u{037F}'..='\u{1FFF}'
+        | '\u{200C}'..='\u{200D}'
+        | '\u{2070}'..='\u{218F}'
+        | '\u{2C00}'..='\u{2FEF}'
+        | '\u{3001}'..='\u{D7FF}'
+        | '\u{F900}'..='\u{FDCF}'
+        | '\u{FDF0}'..='\u{FFFD}'
+        | '\u{10000}'..='\u{EFFFF}')
+    }
+
+    // [164s] 	PN_CHARS_U 	::= 	PN_CHARS_BASE | '_'
+    fn is_pn_chars_base_with_underscore(khar: char) -> bool {
+        Self::is_pn_chars_base(khar) || matches!(khar, '_')
+    }
+
+    // [166s] 	PN_CHARS 	::= 	PN_CHARS_U | '-' | [0-9] | #x00B7 | [#x0300-#x036F] | [#x203F-#x2040]
+    fn is_pn_chars(khar: char) -> bool {
+        Self::is_pn_chars_base_with_underscore(khar)
+            || matches!(khar,
+                '-'
+                | '0'..='9'
+                | '\u{00B7}'
+                | '\u{0300}'..='\u{036F}'
+                | '\u{203F}'..='\u{2040}'
+            )
     }
 }
 
@@ -905,6 +947,38 @@ mod tests {
             )),
             PrefixedName::parse::<VerboseError<&str>>(":Thing")
         );
+        assert!(PrefixedName::parse::<VerboseError<&str>>("\"http://example.com").is_err());
+        // Some examples from the reference
+        assert_eq!(
+            Ok((
+                "",
+                PrefixedName {
+                    prefix: Some(Cow::Borrowed("leg")),
+                    name: Some(Cow::Borrowed("3032571")),
+                }
+            )),
+            PrefixedName::parse::<VerboseError<&str>>("leg:3032571")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                PrefixedName {
+                    prefix: Some(Cow::Borrowed("isbn13")),
+                    name: Some(Cow::Borrowed("9780136019701")),
+                }
+            )),
+            PrefixedName::parse::<VerboseError<&str>>("isbn13:9780136019701")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                PrefixedName {
+                    prefix: Some(Cow::Borrowed("og")),
+                    name: Some(Cow::Borrowed("video:height")),
+                }
+            )),
+            PrefixedName::parse::<VerboseError<&str>>("og:video:height")
+        );
     }
 
     #[test]
@@ -920,6 +994,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!("owl:Thing".as_bytes(), &mem[..written_bytes as usize]);
+    }
+
+    #[test]
+    fn parse_object() {
+        assert_eq!(
+            Ok((
+                "",
+                Object::Literal(Literal::RDFLiteral(RDFLiteral {
+                    string: TurtleString::StringLiteralQuote(StringLiteralQuote {
+                        string: Cow::Borrowed("http://example.com")
+                    }),
+                    language_tag: None
+                }))
+            )),
+            Object::parse::<VerboseError<&str>>(r#""http://example.com""#)
+        );
     }
 
     #[test]
@@ -1140,6 +1230,16 @@ mod tests {
                 }
             )),
             StringLiteralQuote::parse::<VerboseError<&str>>(r#""Dwayne \"The Rock\" Johnson""#)
+        );
+        // URI
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralQuote {
+                    string: Cow::Borrowed(r#"http://example.com"#),
+                }
+            )),
+            StringLiteralQuote::parse::<VerboseError<&str>>(r#""http://example.com""#)
         );
     }
 

@@ -53,6 +53,7 @@ fn example8() {
 
 #[test]
 #[ignore]
+// Doesn't handle special case of verb `a` as a replacement for `rdfs:type`
 fn example9() {
     parse_example_file("example9.ttl");
 }
@@ -80,7 +81,6 @@ fn example13() {
 }
 
 #[test]
-#[ignore]
 fn example14() {
     parse_example_file("example14.ttl");
 }
@@ -98,7 +98,6 @@ fn example16() {
 }
 
 #[test]
-#[ignore]
 fn example17() {
     parse_example_file("example17.ttl");
 }
@@ -110,7 +109,6 @@ fn example18() {
 }
 
 #[test]
-#[ignore]
 fn example19() {
     parse_example_file("example19.ttl");
 }
