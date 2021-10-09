@@ -7,11 +7,11 @@ use cookie_factory::multi::separated_list as cf_separated_list;
 use cookie_factory::sequence::tuple as cf_tuple;
 use cookie_factory::SerializeFn;
 use nom::branch::alt;
-use nom::bytes::complete::{escaped_transform, is_not, tag};
-use nom::character::complete::{alphanumeric1, char, multispace0, multispace1, satisfy};
+use nom::bytes::complete::{escaped_transform, is_not, tag, take_until};
+use nom::character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, satisfy};
 use nom::combinator::{map, map_parser, opt, value};
 use nom::error::{FromExternalError, ParseError as NomParseError, VerboseError};
-use nom::multi::{many1, separated_list1};
+use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom::IResult;
 use std::borrow::Cow;
@@ -750,7 +750,7 @@ impl<'a> Literal<'a> {
 pub struct RDFLiteral<'a> {
     pub string: TurtleString<'a>,
     pub language_tag: Option<Cow<'a, str>>,
-    // TODO: language_tag or IRI (for datatype?)
+    pub iri: Option<IRI<'a>>,
 }
 
 impl<'a> RDFLiteral<'a> {
@@ -761,22 +761,66 @@ impl<'a> RDFLiteral<'a> {
         map(
             tuple((
                 TurtleString::parse,
-                map(
-                    opt(tuple((char('@'), alphanumeric1))),
-                    |language_tag_tuple| {
-                        language_tag_tuple.map(|(_, language_tag)| Cow::Borrowed(language_tag))
-                    },
-                ),
+                opt(alt((
+                    map(Self::parse_language_tag, |(first, repeating)| {
+                        let mut all_parts = vec![first];
+                        all_parts.extend_from_slice(&repeating);
+                        either::Either::Left(Cow::Owned(all_parts.join("-")))
+                    }),
+                    map(tuple((tag("^^"), IRI::parse)), |(_, iri)| {
+                        either::Either::Right(iri)
+                    }),
+                ))),
             )),
-            |(string, language_tag)| Self {
-                string,
-                language_tag,
+            |(string, language_tag_or_iri)| match language_tag_or_iri {
+                None => Self {
+                    string,
+                    language_tag: None,
+                    iri: None,
+                },
+                Some(either::Either::Left(language_tag)) => Self {
+                    string,
+                    language_tag: Some(language_tag),
+                    iri: None,
+                },
+                Some(either::Either::Right(iri)) => Self {
+                    string,
+                    language_tag: None,
+                    iri: Some(iri),
+                },
             },
         )(input)
     }
 
-    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
-        TurtleString::gen(&subject.string)
+    fn parse_language_tag<E>(input: &'a str) -> IResult<&'a str, (&'a str, Vec<&'a str>), E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        tuple((char('@'), alpha1, many0(tuple((char('-'), alphanumeric1)))))(input).map(
+            |(remainder, (_, first, repeating))| {
+                (
+                    remainder,
+                    (first, repeating.into_iter().map(|n| n.1).collect()),
+                )
+            },
+        )
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match (&subject.language_tag, &subject.iri) {
+            (None, None) => Box::new(TurtleString::gen(&subject.string)),
+            (Some(language_tag), None) => Box::new(cf_tuple((
+                TurtleString::gen(&subject.string),
+                cf_string("@"),
+                cf_string(language_tag),
+            ))),
+            (None, Some(iri)) => Box::new(cf_tuple((
+                TurtleString::gen(&subject.string),
+                cf_string("^^"),
+                IRI::gen(iri),
+            ))),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -807,7 +851,9 @@ impl BooleanLiteral {
 #[derive(Debug, PartialEq, Eq)]
 pub enum TurtleString<'a> {
     StringLiteralQuote(StringLiteralQuote<'a>),
-    // TODO: other quoting variants
+    StringLiteralSingleQuote(StringLiteralSingleQuote<'a>),
+    StringLiteralLongQuote(StringLiteralLongQuote<'a>),
+    StringLiteralLongSingleQuote(StringLiteralLongSingleQuote<'a>),
 }
 
 impl<'a> TurtleString<'a> {
@@ -815,14 +861,30 @@ impl<'a> TurtleString<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(StringLiteralQuote::parse, Self::StringLiteralQuote)(input)
+        alt((
+            map(StringLiteralLongQuote::parse, Self::StringLiteralLongQuote),
+            map(
+                StringLiteralLongSingleQuote::parse,
+                Self::StringLiteralLongSingleQuote,
+            ),
+            map(StringLiteralQuote::parse, Self::StringLiteralQuote),
+            map(
+                StringLiteralSingleQuote::parse,
+                Self::StringLiteralSingleQuote,
+            ),
+        ))(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
             Self::StringLiteralQuote(string) => Box::new(StringLiteralQuote::gen(string)),
-            #[allow(unreachable_patterns)]
-            _ => todo!(),
+            Self::StringLiteralSingleQuote(string) => {
+                Box::new(StringLiteralSingleQuote::gen(string))
+            }
+            Self::StringLiteralLongQuote(string) => Box::new(StringLiteralLongQuote::gen(string)),
+            Self::StringLiteralLongSingleQuote(string) => {
+                Box::new(StringLiteralLongSingleQuote::gen(string))
+            }
         }
     }
 }
@@ -867,6 +929,120 @@ impl<'a> StringLiteralQuote<'a> {
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((cf_string("\""), cf_string(&subject.string), cf_string("\"")))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct StringLiteralSingleQuote<'a> {
+    pub string: Cow<'a, str>,
+}
+
+impl<'a> StringLiteralSingleQuote<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(Self::parse_str, |string| Self {
+            string: Cow::Owned(string),
+        })(input)
+    }
+
+    /// Inner logic should be identical to [StringLiteralQuote::parse_str].
+    fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, String, E> {
+        preceded(
+            char('\''),
+            terminated(
+                // Inner string
+                escaped_transform(
+                    satisfy(|c| {
+                        c.is_alphanumeric()
+                            || c.is_whitespace()
+                            || (c.is_ascii_punctuation() && c != '\'' && c != '\\')
+                    }),
+                    '\\',
+                    alt((
+                        value("\\", tag("\\")),
+                        value("\'", tag("\'")),
+                        value("\n", tag("\n")),
+                    )),
+                ),
+                char('\''),
+            ),
+        )(i)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((cf_string("\'"), cf_string(&subject.string), cf_string("\'")))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct StringLiteralLongQuote<'a> {
+    pub string: Cow<'a, str>,
+}
+
+impl<'a> StringLiteralLongQuote<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(Self::parse_str, |string| Self {
+            string: Cow::Borrowed(string),
+        })(input)
+    }
+
+    fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+        preceded(
+            tag("\"\"\""),
+            terminated(
+                // Inner string
+                take_until("\"\"\""),
+                tag("\"\"\""),
+            ),
+        )(i)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            cf_string("\"\"\""),
+            cf_string(&subject.string),
+            cf_string("\"\"\""),
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct StringLiteralLongSingleQuote<'a> {
+    pub string: Cow<'a, str>,
+}
+
+impl<'a> StringLiteralLongSingleQuote<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(Self::parse_str, |string| Self {
+            string: Cow::Borrowed(string),
+        })(input)
+    }
+
+    fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+        preceded(
+            tag("'''"),
+            terminated(
+                // Inner string
+                take_until("'''"),
+                tag("'''"),
+            ),
+        )(i)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
+        cf_tuple((
+            cf_string("'''"),
+            cf_string(&subject.string),
+            cf_string("'''"),
+        ))
     }
 }
 
@@ -1005,7 +1181,8 @@ mod tests {
                     string: TurtleString::StringLiteralQuote(StringLiteralQuote {
                         string: Cow::Borrowed("http://example.com")
                     }),
-                    language_tag: None
+                    language_tag: None,
+                    iri: None
                 }))
             )),
             Object::parse::<VerboseError<&str>>(r#""http://example.com""#)
@@ -1244,6 +1421,65 @@ mod tests {
     }
 
     #[test]
+    fn parse_string_literal_single_quote() {
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralSingleQuote {
+                    string: Cow::Borrowed("SomeString"),
+                }
+            )),
+            StringLiteralSingleQuote::parse::<VerboseError<&str>>(r#"'SomeString'"#)
+        );
+    }
+
+    #[test]
+    fn parse_string_literal_long_quote() {
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralLongQuote {
+                    string: Cow::Borrowed("SomeString"),
+                }
+            )),
+            StringLiteralLongQuote::parse::<VerboseError<&str>>(r#""""SomeString""""#)
+        );
+        // Empty
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralLongQuote {
+                    string: Cow::Borrowed(""),
+                }
+            )),
+            StringLiteralLongQuote::parse::<VerboseError<&str>>(r#""""""""#)
+        );
+        // Contains quote
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralLongQuote {
+                    string: Cow::Borrowed("SomeString\"OtherString"),
+                }
+            )),
+            StringLiteralLongQuote::parse::<VerboseError<&str>>(r#""""SomeString"OtherString""""#)
+        );
+    }
+
+    #[test]
+    fn parse_string_literal_long_single_quote() {
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralLongSingleQuote {
+                    string: Cow::Borrowed("SomeString"),
+                }
+            )),
+            StringLiteralLongSingleQuote::parse::<VerboseError<&str>>(r#"'''SomeString'''"#)
+        );
+    }
+
+    #[test]
     fn parse_rdf_literal() {
         assert_eq!(
             Ok((
@@ -1253,9 +1489,111 @@ mod tests {
                         string: Cow::Borrowed("SomeString"),
                     }),
                     language_tag: Some(Cow::Borrowed("en")),
+                    iri: None
                 }
             )),
             RDFLiteral::parse::<VerboseError<&str>>("\"SomeString\"@en")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                RDFLiteral {
+                    string: TurtleString::StringLiteralQuote(StringLiteralQuote {
+                        string: Cow::Borrowed("SomeString"),
+                    }),
+                    language_tag: None,
+                    iri: Some(IRI::PrefixedName(PrefixedName {
+                        prefix: Some(Cow::Borrowed("xsd")),
+                        name: Some(Cow::Borrowed("boolean")),
+                    }))
+                }
+            )),
+            RDFLiteral::parse::<VerboseError<&str>>("\"SomeString\"^^xsd:boolean")
+        );
+        // Non-trivial language tags
+        assert_eq!(
+            Ok((
+                "",
+                RDFLiteral {
+                    string: TurtleString::StringLiteralQuote(StringLiteralQuote {
+                        string: Cow::Borrowed("SomeString"),
+                    }),
+                    language_tag: Some(Cow::Borrowed("es-419")),
+                    iri: None
+                }
+            )),
+            RDFLiteral::parse::<VerboseError<&str>>("\"SomeString\"@es-419")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                RDFLiteral {
+                    string: TurtleString::StringLiteralQuote(StringLiteralQuote {
+                        string: Cow::Borrowed("SomeString"),
+                    }),
+                    language_tag: Some(Cow::Borrowed("nan-Hant-TW")),
+                    iri: None
+                }
+            )),
+            RDFLiteral::parse::<VerboseError<&str>>("\"SomeString\"@nan-Hant-TW")
+        );
+    }
+
+    #[test]
+    fn render_rdf_literal() {
+        let mut mem: [u8; 1024] = [0; 1024];
+        let buf = &mut mem[..];
+        let (_, written_bytes) = cookie_factory::gen(
+            RDFLiteral::gen(&RDFLiteral {
+                string: TurtleString::StringLiteralQuote(StringLiteralQuote {
+                    string: Cow::Borrowed("SomeString"),
+                }),
+                language_tag: None,
+                iri: None,
+            }),
+            buf,
+        )
+        .unwrap();
+        assert_eq!(
+            r#""SomeString""#,
+            std::str::from_utf8(&mem[..written_bytes as usize]).unwrap()
+        );
+        let mut mem: [u8; 1024] = [0; 1024];
+        let buf = &mut mem[..];
+        let (_, written_bytes) = cookie_factory::gen(
+            RDFLiteral::gen(&RDFLiteral {
+                string: TurtleString::StringLiteralQuote(StringLiteralQuote {
+                    string: Cow::Borrowed("SomeString"),
+                }),
+                language_tag: Some(Cow::Borrowed("en")),
+                iri: None,
+            }),
+            buf,
+        )
+        .unwrap();
+        assert_eq!(
+            r#""SomeString"@en"#,
+            std::str::from_utf8(&mem[..written_bytes as usize]).unwrap()
+        );
+        let mut mem: [u8; 1024] = [0; 1024];
+        let buf = &mut mem[..];
+        let (_, written_bytes) = cookie_factory::gen(
+            RDFLiteral::gen(&RDFLiteral {
+                string: TurtleString::StringLiteralQuote(StringLiteralQuote {
+                    string: Cow::Borrowed("SomeString"),
+                }),
+                language_tag: None,
+                iri: Some(IRI::PrefixedName(PrefixedName {
+                    prefix: Some(Cow::Borrowed("xsd")),
+                    name: Some(Cow::Borrowed("boolean")),
+                })),
+            }),
+            buf,
+        )
+        .unwrap();
+        assert_eq!(
+            r#""SomeString"^^xsd:boolean"#,
+            std::str::from_utf8(&mem[..written_bytes as usize]).unwrap()
         );
     }
 

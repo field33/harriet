@@ -64,13 +64,13 @@ fn example10() {
 }
 
 #[test]
-#[ignore]
 fn example11() {
     parse_example_file("example11.ttl");
 }
 
 #[test]
 #[ignore]
+// Number literals
 fn example12() {
     parse_example_file("example12.ttl");
 }

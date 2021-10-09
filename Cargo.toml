@@ -7,4 +7,5 @@ edition = "2018"
 
 [dependencies]
 cookie-factory = "0.3.2"
+either = "1.6.1"
 nom = { version = "6.2.1", features = ["alloc"]}
