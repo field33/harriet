@@ -252,7 +252,7 @@ impl<'a> PredicateObjectList<'a> {
     {
         map(
             separated_list1(
-                tuple((multispace1, tag(";"), multispace1)),
+                tuple((multispace0, tag(";"), multispace0)),
                 map(
                     tuple((IRI::parse, multispace1, ObjectList::parse)),
                     |(verb, _, list)| (verb, list),
@@ -283,7 +283,11 @@ impl<'a> BlankNodePropertyList<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
-            map_parser(Self::parse_parens, PredicateObjectList::parse),
+            delimited(
+                tuple((char('['), multispace0)),
+                PredicateObjectList::parse,
+                tuple((multispace0, char(']'))),
+            ),
             |list| Self { list },
         )(input)
     }
@@ -1476,6 +1480,55 @@ mod tests {
                 }
             )),
             StringLiteralLongSingleQuote::parse::<VerboseError<&str>>(r#"'''SomeString'''"#)
+        );
+    }
+
+    #[test]
+    fn parse_blank_node_property_list() {
+        assert_eq!(
+            Ok((
+                "",
+                BlankNodePropertyList {
+                    list: PredicateObjectList {
+                        list: vec![
+                            (
+                                IRI::PrefixedName(PrefixedName {
+                                    prefix: Some("ex".into()),
+                                    name: Some("fullname".into())
+                                }),
+                                ObjectList {
+                                    list: vec![Object::Literal(Literal::RDFLiteral(RDFLiteral {
+                                        string: TurtleString::StringLiteralQuote(
+                                            StringLiteralQuote {
+                                                string: "Dave Beckett".into()
+                                            }
+                                        ),
+                                        language_tag: None,
+                                        iri: None
+                                    }))]
+                                }
+                            ),
+                            (
+                                IRI::PrefixedName(PrefixedName {
+                                    prefix: Some("ex".into()),
+                                    name: Some("homePage".into())
+                                }),
+                                ObjectList {
+                                    list: vec![Object::IRI(IRI::IRIReference(IRIReference {
+                                        iri: "http://purl.org/net/dajobe/".into()
+                                    }))]
+                                }
+                            )
+                        ]
+                    }
+                }
+            )),
+            BlankNodePropertyList::parse::<VerboseError<&str>>(
+                r#"[
+                        ex:fullname "Dave Beckett";
+                        ex:homePage <http://purl.org/net/dajobe/>
+                      ]"#
+            )
         );
     }
 

@@ -1,0 +1,16 @@
+:Foo rdf:type owl:Class ;
+              rdfs:subClassOf :Bar ,
+                              [ rdf:type owl:Restriction ;
+                                owl:onProperty :fooBaring ;
+                                owl:allValuesFrom [ rdf:type owl:Class ;
+                                                    owl:oneOf ( :One
+                                                                :Two
+                                                                :Three
+                                                              )
+                                                  ]
+                              ] ,
+                              [ rdf:type owl:Restriction ;
+                                owl:onProperty :barFooing ;
+                                owl:allValuesFrom :Toasty
+                              ] ;
+              rdfs:label "Hello world"@en .
