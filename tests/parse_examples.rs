@@ -9,6 +9,16 @@ fn parse_example_file(file_name: &str) {
         .0
         .is_empty());
 }
+
+fn parse_wildtype_file(file_name: &str) {
+    let ontology =
+        std::fs::read_to_string(&format!("./tests/wildtype_examples/{}", file_name)).unwrap();
+    assert!(dbg!(TurtleDocument::parse::<VerboseError<&str>>(&ontology))
+        .unwrap()
+        .0
+        .is_empty());
+}
+
 #[test]
 #[ignore]
 // TODO: There is a comment in the middle of a statement (build custom parser for whitespace, and start treating comments as whitespace)
@@ -111,4 +121,57 @@ fn example18() {
 #[test]
 fn example19() {
     parse_example_file("example19.ttl");
+}
+
+#[test]
+fn example20() {
+    parse_example_file("example20.ttl");
+}
+
+#[test]
+fn example21() {
+    parse_example_file("example21.ttl");
+}
+
+#[test]
+#[ignore]
+// Multiline string in a single line via \n escape sequence
+fn example22() {
+    parse_example_file("example22.ttl");
+}
+
+#[test]
+#[ignore]
+fn example23() {
+    parse_example_file("example23.ttl");
+}
+
+#[test]
+#[ignore]
+fn example24() {
+    parse_example_file("example24.ttl");
+}
+
+#[test]
+#[ignore]
+fn example25() {
+    parse_example_file("example25.ttl");
+}
+
+#[test]
+#[ignore]
+fn example26() {
+    parse_example_file("example26.ttl");
+}
+
+#[test]
+// Trimmed down example of nested blankNodePropertyList
+fn example_nested_lists() {
+    parse_wildtype_file("nested_lists.ttl");
+}
+
+#[test]
+// Slightly more expanded example of nested blankNodePropertyList
+fn example_nested_lists2() {
+    parse_wildtype_file("nested_lists2.ttl");
 }

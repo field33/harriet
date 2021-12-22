@@ -1,0 +1,3 @@
+:Foo rdfs:subClassOf [
+                      owl:allValuesFrom [ rdf:type owl:Class ]
+                     ] .
