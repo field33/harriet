@@ -416,7 +416,7 @@ impl<'a> Collection<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 /// One of multiple kinds of directives.
 ///
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-directive>
@@ -453,7 +453,7 @@ impl<'a> Directive<'a> {
 /// A directive specifying the base for relative IRIs. E.g. `@base <http://example.com> .`
 ///
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-base>
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct BaseDirective<'a> {
     pub iri: IRIReference<'a>,
 }
@@ -491,7 +491,7 @@ impl<'a> BaseDirective<'a> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SparqlBaseDirective<'a> {
     pub iri: IRIReference<'a>,
 }
@@ -524,7 +524,7 @@ impl<'a> SparqlBaseDirective<'a> {
 /// A directive specifying the base for relative prefixed IRIs. E.g. `@prefix owl: <http://www.w3.org/2002/07/owl#> .`
 ///
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-prefixID>
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct PrefixDirective<'a> {
     pub prefix: Option<Cow<'a, str>>,
     pub iri: IRIReference<'a>,
@@ -572,7 +572,7 @@ impl<'a> PrefixDirective<'a> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SparqlPrefixDirective<'a> {
     pub prefix: Option<Cow<'a, str>>,
     pub iri: IRIReference<'a>,
@@ -621,7 +621,7 @@ impl<'a> SparqlPrefixDirective<'a> {
 /// Grammar reference: <https://www.w3.org/TR/turtle/#sec-iri-references>
 ///
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-IRIREF>
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct IRIReference<'a> {
     pub iri: Cow<'a, str>,
 }
@@ -650,7 +650,7 @@ impl<'a> IRIReference<'a> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct PrefixedName<'a> {
     pub prefix: Option<Cow<'a, str>>,
     pub name: Option<Cow<'a, str>>,
@@ -889,6 +889,17 @@ impl<'a> TurtleString<'a> {
             Self::StringLiteralLongSingleQuote(string) => {
                 Box::new(StringLiteralLongSingleQuote::gen(string))
             }
+        }
+    }
+}
+
+impl<'a> ToString for TurtleString<'a> {
+    fn to_string(&self) -> String {
+        match self {
+            TurtleString::StringLiteralQuote(inner) => inner.string.to_string(),
+            TurtleString::StringLiteralSingleQuote(inner) => inner.string.to_string(),
+            TurtleString::StringLiteralLongQuote(inner) => inner.string.to_string(),
+            TurtleString::StringLiteralLongSingleQuote(inner) => inner.string.to_string(),
         }
     }
 }
