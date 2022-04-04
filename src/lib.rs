@@ -3,11 +3,14 @@
 use crate::ParseError::NotFullyParsed;
 use cookie_factory::combinator::string as cf_string;
 use cookie_factory::lib::std::io::Write;
+use cookie_factory::multi::all as cf_all;
 use cookie_factory::multi::separated_list as cf_separated_list;
 use cookie_factory::sequence::tuple as cf_tuple;
 use cookie_factory::SerializeFn;
 use nom::branch::alt;
-use nom::bytes::complete::{escaped_transform, is_not, tag, take_until};
+use nom::bytes::complete::{
+    escaped_transform, is_not, tag, take_till, take_until, take_while1,
+};
 use nom::character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, satisfy};
 use nom::combinator::{map, map_parser, opt, value};
 use nom::error::{FromExternalError, ParseError as NomParseError, VerboseError};
@@ -19,7 +22,8 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TurtleDocument<'a> {
-    pub items: Vec<Item<'a>>,
+    pub statements: Vec<Statement<'a>>,
+    pub trailing_whitespace: Option<Whitespace<'a>>,
 }
 
 #[derive(Debug)]
@@ -43,15 +47,19 @@ impl<'a> TurtleDocument<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
-            many1(alt((map(Item::parse, Some), map(multispace1, |_| None)))),
-            |maybe_statements| Self {
-                items: maybe_statements.into_iter().filter_map(|n| n).collect(),
+            tuple((many0(Statement::parse), opt(Whitespace::parse))),
+            |(statements, trailing)| Self {
+                statements,
+                trailing_whitespace: trailing,
             },
         )(input)
     }
 
     pub fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
-        cf_separated_list(cf_string("\n"), subject.items.iter().map(Item::gen))
+        cf_tuple((
+            cf_all(subject.statements.iter().map(Statement::gen)),
+            Whitespace::gen_option(&subject.trailing_whitespace),
+        ))
     }
 }
 
@@ -67,31 +75,6 @@ impl ToString for TurtleDocument<'_> {
         buf.read_to_end(&mut out).unwrap();
 
         std::str::from_utf8(&out).unwrap().to_owned()
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Item<'a> {
-    Statement(Statement<'a>),
-    Comment(Comment<'a>),
-}
-
-impl<'a> Item<'a> {
-    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
-    where
-        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
-    {
-        alt((
-            map(Comment::parse, Item::Comment),
-            map(Statement::parse, Item::Statement),
-        ))(input)
-    }
-
-    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
-        match subject {
-            Self::Statement(statement) => Box::new(Statement::gen(statement)),
-            Self::Comment(comment) => Box::new(Comment::gen(comment)),
-        }
     }
 }
 
@@ -120,38 +103,63 @@ impl<'a> Statement<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Comment<'a> {
-    pub comment: Cow<'a, str>,
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Whitespace<'a> {
+    pub whitespace: Cow<'a, str>,
 }
 
-impl<'a> Comment<'a> {
+impl<'a> Whitespace<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(Self::parse_raw, |comment_raw: &'a str| {
-            let comment = Cow::Borrowed(comment_raw);
+        map(Self::parse_raw, |whitespace_raw: Vec<String>| {
+            let whitespace = Cow::Owned(whitespace_raw.join(""));
 
-            Self { comment }
+            Self { whitespace }
         })(input)
     }
 
-    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, &str, E>
+    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, Vec<String>, E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        delimited(char('#'), is_not("\n"), char('\n'))(input)
+        many1(alt((
+            // WS
+            map(take_while1(Whitespace::is_ws_char), |ws: &str| {
+                ws.to_string()
+            }),
+            // Comment starting with '#' and until end of the line; Mentioned in the spec, but doesn't seem to be in the grammar
+            map(
+                tuple((char('#'), take_till(|c| c == '\n'))),
+                // TODO: replace format with something more efficient?
+                |(pound, comment): (char, &str)| format!("{}{}", pound, comment),
+            ),
+        )))(input)
+    }
+
+    /// [161s] 	WS 	::= 	#x20 | #x9 | #xD | #xA /* #x20=space #x9=character tabulation #xD=carriage return #xA=new line */
+    fn is_ws_char(chchar: char) -> bool {
+        matches!(chchar, '\u{20}' | '\u{9}' | '\u{D}' | '\u{A}')
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
-        cf_tuple((cf_string("#"), cf_string(&subject.comment), cf_string("\n")))
+        cf_string(&subject.whitespace)
+    }
+
+    fn gen_option<'b, W: Write + 'b>(
+        whitespace_opt: &'b Option<Self>,
+    ) -> Box<dyn SerializeFn<W> + 'b> {
+        match whitespace_opt {
+            Some(whitespace) => Box::new(cf_string(&whitespace.whitespace)),
+            None => Box::new(cf_string("")),
+        }
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Triples<'a> {
-    Labeled(Subject<'a>, PredicateObjectList<'a>),
+    Labeled(Option<Whitespace<'a>>, Subject<'a>, PredicateObjectList<'a>),
     // Labeled()
     // Labeled()
 }
@@ -164,8 +172,8 @@ impl<'a> Triples<'a> {
         map(
             tuple((
                 map(
-                    tuple((Subject::parse, multispace1, PredicateObjectList::parse)),
-                    |(subject, _, list)| Self::Labeled(subject, list),
+                    tuple((opt(Whitespace::parse), Subject::parse, multispace1, PredicateObjectList::parse)),
+                    |(leading, subject, _, list)| Self::Labeled(leading, subject, list),
                 ),
                 multispace1,
                 char('.'),
@@ -176,7 +184,8 @@ impl<'a> Triples<'a> {
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
-            Self::Labeled(subject, predicate_object_list) => Box::new(cf_tuple((
+            Self::Labeled(leading, subject, predicate_object_list) => Box::new(cf_tuple((
+                Whitespace::gen_option(leading),
                 Subject::gen(subject),
                 cf_string(" "),
                 PredicateObjectList::gen(predicate_object_list),
@@ -455,6 +464,7 @@ impl<'a> Directive<'a> {
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-base>
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct BaseDirective<'a> {
+    pub leading_whitespace: Option<Whitespace<'a>>,
     pub iri: IRIReference<'a>,
 }
 
@@ -463,21 +473,25 @@ impl<'a> BaseDirective<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(Self::parse_raw, |iri_ref| Self { iri: iri_ref })(input)
+        map(Self::parse_raw, |(leading, iri_ref)| Self {
+            leading_whitespace: leading,
+            iri: iri_ref,
+        })(input)
     }
 
-    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, IRIReference, E>
+    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, IRIReference), E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         tuple((
+            opt(Whitespace::parse),
             tag("@base"),
             multispace1,
             IRIReference::parse,
             multispace1,
             char('.'),
         ))(input)
-        .map(|(remainder, (_, _, iri, _, _))| (remainder, iri))
+        .map(|(remainder, (leading, _, _, iri, _, _))| (remainder, (leading, iri)))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -493,6 +507,7 @@ impl<'a> BaseDirective<'a> {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SparqlBaseDirective<'a> {
+    // TODO: leading
     pub iri: IRIReference<'a>,
 }
 
@@ -526,6 +541,7 @@ impl<'a> SparqlBaseDirective<'a> {
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-prefixID>
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct PrefixDirective<'a> {
+    pub leading_whitespace: Option<Whitespace<'a>>,
     pub prefix: Option<Cow<'a, str>>,
     pub iri: IRIReference<'a>,
 }
@@ -535,17 +551,19 @@ impl<'a> PrefixDirective<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(Self::parse_raw, |(prefix, iri_ref)| Self {
+        map(Self::parse_raw, |(leading, prefix, iri_ref)| Self {
+            leading_whitespace: leading,
             prefix: prefix.map(|n| Cow::Borrowed(n)),
             iri: iri_ref,
         })(input)
     }
 
-    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<&'a str>, IRIReference), E>
+    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, Option<&'a str>, IRIReference), E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         tuple((
+            opt(Whitespace::parse),
             tag("@prefix"),
             multispace1,
             opt(is_not(":")),
@@ -555,11 +573,12 @@ impl<'a> PrefixDirective<'a> {
             multispace1,
             char('.'),
         ))(input)
-        .map(|(remainder, (_, _, prefix, _, _, iri, _, _))| (remainder, (prefix, iri)))
+        .map(|(remainder, (leading, _, _, prefix, _, _, iri, _, _))| (remainder, (leading, prefix, iri)))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((
+            Whitespace::gen_option(&subject.leading_whitespace),
             cf_string("@prefix"),
             cf_string(" "),
             gen_option_cow_str(&subject.prefix),
@@ -574,6 +593,7 @@ impl<'a> PrefixDirective<'a> {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SparqlPrefixDirective<'a> {
+    // TODO: leading
     pub prefix: Option<Cow<'a, str>>,
     pub iri: IRIReference<'a>,
 }
@@ -686,8 +706,8 @@ impl<'a> PrefixedName<'a> {
     }
 
     // [163s] 	PN_CHARS_BASE 	::= 	[A-Z] | [a-z] | [#x00C0-#x00D6] | [#x00D8-#x00F6] | [#x00F8-#x02FF] | [#x0370-#x037D] | [#x037F-#x1FFF] | [#x200C-#x200D] | [#x2070-#x218F] | [#x2C00-#x2FEF] | [#x3001-#xD7FF] | [#xF900-#xFDCF] | [#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
-    fn is_pn_chars_base(khar: char) -> bool {
-        matches!(khar,
+    fn is_pn_chars_base(chchar: char) -> bool {
+        matches!(chchar,
         'A'..='Z'
         | 'a'..='z'
         | '\u{00C0}'..='\u{00D6}'
@@ -1076,6 +1096,67 @@ mod tests {
     use nom::error::VerboseError;
 
     #[test]
+    fn parse_whitespace() {
+        assert_eq!(
+            Ok((
+                "",
+                Whitespace {
+                    whitespace: Cow::Borrowed("   ")
+                }
+            )),
+            Whitespace::parse::<VerboseError<&str>>("   ")
+        );
+        assert_eq!(
+            Ok((
+                ".",
+                Whitespace {
+                    whitespace: Cow::Borrowed("   ")
+                }
+            )),
+            Whitespace::parse::<VerboseError<&str>>("   .")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                Whitespace {
+                    whitespace: Cow::Borrowed("   \n  ")
+                }
+            )),
+            Whitespace::parse::<VerboseError<&str>>("   \n  ")
+        );
+        // Second line with immediate comment
+        assert_eq!(
+            Ok((
+                "",
+                Whitespace {
+                    whitespace: Cow::Borrowed("   \n#Test")
+                }
+            )),
+            Whitespace::parse::<VerboseError<&str>>("   \n#Test")
+        );
+        // Second line with empty comment
+        assert_eq!(
+            Ok((
+                "",
+                Whitespace {
+                    whitespace: Cow::Borrowed("   \n#")
+                }
+            )),
+            Whitespace::parse::<VerboseError<&str>>("   \n#")
+        );
+        // Empty comment
+        assert_eq!(
+            Ok((
+                "",
+                Whitespace {
+                    whitespace: Cow::Borrowed("#")
+                }
+            )),
+            Whitespace::parse::<VerboseError<&str>>("#")
+        );
+    }
+
+    #[test]
     fn parse_iri_reference() {
         assert_eq!(
             Ok((
@@ -1210,6 +1291,7 @@ mod tests {
             Ok((
                 "",
                 BaseDirective {
+                    leading_whitespace: None,
                     iri: IRIReference {
                         iri: Cow::Borrowed("http://example.com/ontology")
                     }
@@ -1222,13 +1304,16 @@ mod tests {
             Ok((
                 "",
                 BaseDirective {
+                    leading_whitespace: Some(Whitespace {
+                        whitespace: Cow::Borrowed("   ")
+                    }),
                     iri: IRIReference {
                         iri: Cow::Borrowed("http://example.com/ontology")
                     }
                 }
             )),
             BaseDirective::parse::<VerboseError<&str>>(
-                "@base  \n <http://example.com/ontology>    ."
+                "   @base  \n <http://example.com/ontology>    ."
             )
         );
     }
@@ -1239,6 +1324,7 @@ mod tests {
             Ok((
                 "",
                 PrefixDirective {
+                    leading_whitespace: None,
                     prefix: Some(Cow::Borrowed("owl")),
                     iri: IRIReference {
                         iri: Cow::Borrowed("http://example.com/ontology")
@@ -1253,6 +1339,7 @@ mod tests {
             Ok((
                 "",
                 PrefixDirective {
+                    leading_whitespace: None,
                     prefix: None,
                     iri: IRIReference {
                         iri: Cow::Borrowed("http://example.com/ontology")
@@ -1350,6 +1437,7 @@ mod tests {
             Ok((
                 "",
                 Directive::Base(BaseDirective {
+                    leading_whitespace: None,
                     iri: IRIReference {
                         iri: Cow::Borrowed("http://example.com/ontology")
                     }
@@ -1361,6 +1449,7 @@ mod tests {
             Ok((
                 "",
                 Directive::Prefix(PrefixDirective {
+                    leading_whitespace: None,
                     prefix: Some(Cow::Borrowed("owl")),
                     iri: IRIReference {
                         iri: Cow::Borrowed("http://example.com/ontology")
@@ -1377,6 +1466,7 @@ mod tests {
             Ok((
                 "",
                 Triples::Labeled(
+                    None,
                     Subject::IRI(IRI::IRIReference(IRIReference {
                         iri: Cow::Borrowed("http://example.org/#spiderman")
                     })),
@@ -1667,6 +1757,7 @@ mod tests {
         let buf = &mut mem[..];
         let (_, written_bytes) = cookie_factory::gen(
             Triples::gen(&Triples::Labeled(
+                None,
                 Subject::IRI(IRI::IRIReference(IRIReference {
                     iri: Cow::Borrowed("http://example.com/"),
                 })),
@@ -1700,25 +1791,33 @@ mod tests {
             Ok((
                 "",
                 TurtleDocument {
-                    items: vec![
-                        Item::Statement(Statement::Directive(Directive::Base(BaseDirective {
+                    statements: vec![
+                        Statement::Directive(Directive::Base(BaseDirective {
+                            leading_whitespace: None,
                             iri: IRIReference {
                                 iri: Cow::Borrowed("http://example.com/ontology")
                             }
-                        }))),
-                        Item::Statement(Statement::Directive(Directive::Prefix(PrefixDirective {
+                        })),
+                        Statement::Directive(Directive::Prefix(PrefixDirective {
+                            leading_whitespace: Some(Whitespace {
+                                whitespace: Cow::Borrowed("\n                \n                ")
+                            }),
                             prefix: None,
                             iri: IRIReference {
                                 iri: Cow::Borrowed("http://example.com/ontology")
                             }
-                        }))),
-                        Item::Statement(Statement::Directive(Directive::Prefix(PrefixDirective {
+                        })),
+                        Statement::Directive(Directive::Prefix(PrefixDirective {
+                            leading_whitespace: Some(Whitespace {
+                                whitespace: Cow::Borrowed("\n                ")
+                            }),
                             prefix: Some(Cow::Borrowed("owl")),
                             iri: IRIReference {
                                 iri: Cow::Borrowed("http://example.com/ontology")
                             }
-                        })))
-                    ]
+                        }))
+                    ],
+                    trailing_whitespace: None,
                 }
             )),
             TurtleDocument::parse::<VerboseError<&str>>(
@@ -1728,6 +1827,7 @@ mod tests {
                 @prefix : <http://example.com/ontology> .
                 @prefix owl: <http://example.com/ontology> .
             "#
+                .trim()
             )
         );
     }
@@ -1738,25 +1838,33 @@ mod tests {
         let buf = &mut mem[..];
         let (_, written_bytes) = cookie_factory::gen(
             TurtleDocument::gen(&TurtleDocument {
-                items: vec![
-                    Item::Statement(Statement::Directive(Directive::Base(BaseDirective {
+                statements: vec![
+                    Statement::Directive(Directive::Base(BaseDirective {
+                        leading_whitespace: None,
                         iri: IRIReference {
                             iri: Cow::Borrowed("http://example.com/ontology"),
                         },
-                    }))),
-                    Item::Statement(Statement::Directive(Directive::Prefix(PrefixDirective {
+                    })),
+                    Statement::Directive(Directive::Prefix(PrefixDirective {
+                        leading_whitespace: Some(Whitespace {
+                            whitespace: Cow::Borrowed("\n")
+                        }),
                         prefix: None,
                         iri: IRIReference {
                             iri: Cow::Borrowed("http://example.com/ontology"),
                         },
-                    }))),
-                    Item::Statement(Statement::Directive(Directive::Prefix(PrefixDirective {
+                    })),
+                    Statement::Directive(Directive::Prefix(PrefixDirective {
+                        leading_whitespace: Some(Whitespace {
+                            whitespace: Cow::Borrowed("\n")
+                        }),
                         prefix: Some(Cow::Borrowed("owl")),
                         iri: IRIReference {
                             iri: Cow::Borrowed("http://example.com/ontology"),
                         },
-                    }))),
+                    })),
                 ],
+                trailing_whitespace: None,
             }),
             buf,
         )
