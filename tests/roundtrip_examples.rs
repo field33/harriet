@@ -1,5 +1,6 @@
 use harriet::TurtleDocument;
 use nom::error::VerboseError;
+use pretty_assertions::{assert_eq};
 
 fn roundtrip_example_file(file_name: &str) {
     let input_ontology =
@@ -48,7 +49,6 @@ fn example2() {
 }
 
 #[test]
-#[ignore]
 fn example3() {
     roundtrip_example_file("example3.ttl");
 }
@@ -59,7 +59,6 @@ fn example4() {
 }
 
 #[test]
-#[ignore]
 fn example5() {
     roundtrip_example_file("example5.ttl");
 }
@@ -104,7 +103,6 @@ fn example12() {
 }
 
 #[test]
-#[ignore]
 fn example13() {
     roundtrip_example_file("example13.ttl");
 }
@@ -138,7 +136,6 @@ fn example18() {
 }
 
 #[test]
-#[ignore]
 fn example19() {
     roundtrip_example_file("example19.ttl");
 }
@@ -150,7 +147,6 @@ fn example20() {
 }
 
 #[test]
-#[ignore]
 fn example21() {
     roundtrip_example_file("example21.ttl");
 }
@@ -187,7 +183,6 @@ fn example26() {
 }
 
 #[test]
-#[ignore]
 // Trimmed down example of nested blankNodePropertyList
 fn example_nested_lists() {
     roundtrip_wildtype_file("nested_lists.ttl");

@@ -16,3 +16,6 @@ categories = ["parser-implementations"]
 cookie-factory = "0.3"
 either = "1.6"
 nom = { version = "7", features = ["alloc"]}
+
+[dev-dependencies]
+pretty_assertions = "1.2.1"

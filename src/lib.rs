@@ -8,9 +8,7 @@ use cookie_factory::multi::separated_list as cf_separated_list;
 use cookie_factory::sequence::tuple as cf_tuple;
 use cookie_factory::SerializeFn;
 use nom::branch::alt;
-use nom::bytes::complete::{
-    escaped_transform, is_not, tag, take_till, take_until, take_while1,
-};
+use nom::bytes::complete::{escaped_transform, is_not, tag, take_till, take_until, take_while1};
 use nom::character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, satisfy};
 use nom::combinator::{map, map_parser, opt, value};
 use nom::error::{FromExternalError, ParseError as NomParseError, VerboseError};
@@ -18,6 +16,7 @@ use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom::IResult;
 use std::borrow::Cow;
+use std::borrow::Cow::Borrowed;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -103,12 +102,19 @@ impl<'a> Statement<'a> {
     }
 }
 
+/// Whitespace. May be one of four characters, or a comment (starting with `#`) until the end of a line.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Whitespace<'a> {
     pub whitespace: Cow<'a, str>,
 }
 
 impl<'a> Whitespace<'a> {
+    pub fn space() -> Self {
+        Self {
+            whitespace: Borrowed(" "),
+        }
+    }
+
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
@@ -172,8 +178,12 @@ impl<'a> Triples<'a> {
         map(
             tuple((
                 map(
-                    tuple((opt(Whitespace::parse), Subject::parse, multispace1, PredicateObjectList::parse)),
-                    |(leading, subject, _, list)| Self::Labeled(leading, subject, list),
+                    tuple((
+                        opt(Whitespace::parse),
+                        Subject::parse,
+                        PredicateObjectList::parse,
+                    )),
+                    |(leading, subject, list)| Self::Labeled(leading, subject, list),
                 ),
                 multispace1,
                 char('.'),
@@ -187,7 +197,6 @@ impl<'a> Triples<'a> {
             Self::Labeled(leading, subject, predicate_object_list) => Box::new(cf_tuple((
                 Whitespace::gen_option(leading),
                 Subject::gen(subject),
-                cf_string(" "),
                 PredicateObjectList::gen(predicate_object_list),
                 cf_string(" ."),
             ))),
@@ -251,7 +260,12 @@ impl<'a> IRI<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PredicateObjectList<'a> {
     // TODO: IRI should be "Verb" - Enum between IRI and literal "a"
-    pub list: Vec<(IRI<'a>, ObjectList<'a>)>,
+    pub list: Vec<(
+        Whitespace<'a>,
+        IRI<'a>,
+        ObjectList<'a>,
+        Option<Whitespace<'a>>, /* Token: ';' */
+    )>,
 }
 
 impl<'a> PredicateObjectList<'a> {
@@ -260,30 +274,58 @@ impl<'a> PredicateObjectList<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
-            separated_list1(
-                tuple((multispace0, tag(";"), multispace0)),
-                map(
-                    tuple((IRI::parse, multispace1, ObjectList::parse)),
-                    |(verb, _, list)| (verb, list),
-                ),
-            ),
+            many1(map(
+                tuple((
+                    Whitespace::parse,
+                    IRI::parse,
+                    ObjectList::parse,
+                    opt(tuple((opt(Whitespace::parse), tag(";")))),
+                )),
+                |(leading, verb, list, ws_pre_semicolon_opt)| {
+                    (
+                        leading,
+                        verb,
+                        list,
+                        ws_pre_semicolon_opt.map(|(ws, _sem)| ws).flatten(),
+                    )
+                },
+            )),
             |list| Self { list },
         )(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_separated_list(
-            cf_string(" ; "),
-            subject.list.iter().map(|(verb, object_list)| {
-                cf_tuple((IRI::gen(verb), cf_string(" "), ObjectList::gen(object_list)))
-            }),
+            cf_string(";"),
+            subject
+                .list
+                .iter()
+                .map(|(leading, verb, object_list, ws_2)| {
+                    cf_tuple((
+                        Whitespace::gen(leading),
+                        IRI::gen(verb),
+                        ObjectList::gen(object_list),
+                        Whitespace::gen_option(ws_2),
+                    ))
+                }),
         )
+    }
+
+    fn gen_opt_semicolon<W: Write + 'a>(
+        ws_opt: &'a Option<Whitespace<'a>>,
+    ) -> Box<dyn SerializeFn<W> + 'a> {
+        match ws_opt {
+            Some(_) => Box::new(cf_tuple((Whitespace::gen_option(ws_opt), cf_string(";")))),
+            None => Box::new(cf_string("")),
+        }
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct BlankNodePropertyList<'a> {
     pub list: PredicateObjectList<'a>,
+    pub trailing_whitespace: Option<Whitespace<'a>>,
+
 }
 
 impl<'a> BlankNodePropertyList<'a> {
@@ -293,11 +335,11 @@ impl<'a> BlankNodePropertyList<'a> {
     {
         map(
             delimited(
-                tuple((char('['), multispace0)),
-                PredicateObjectList::parse,
-                tuple((multispace0, char(']'))),
+                char('['),
+                tuple((PredicateObjectList::parse, opt(Whitespace::parse))),
+                char(']'),
             ),
-            |list| Self { list },
+            |(list, ws)| Self { list, trailing_whitespace: ws },
         )(input)
     }
 
@@ -314,8 +356,9 @@ impl<'a> BlankNodePropertyList<'a> {
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((
-            cf_string("[\n"),
+            cf_string("["),
             PredicateObjectList::gen(&subject.list),
+            Whitespace::gen_option(&subject.trailing_whitespace),
             cf_string("]"),
         ))
     }
@@ -323,7 +366,13 @@ impl<'a> BlankNodePropertyList<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ObjectList<'a> {
-    pub list: Vec<Object<'a>>,
+    pub list: Vec<(
+        // Whitespace before separator (will be None on first element)
+        Option<Whitespace<'a>>,
+        // Whitespace after separator
+        Option<Whitespace<'a>>,
+        Object<'a>,
+    )>,
 }
 
 impl<'a> ObjectList<'a> {
@@ -334,21 +383,40 @@ impl<'a> ObjectList<'a> {
         map(
             many1(alt((
                 // First item
-                map(Object::parse, Some),
+                map(tuple((opt(Whitespace::parse), Object::parse)), |(ws, object)| (None, ws, object)),
                 // Subsequent items delimited by whitespace and ','
                 map(
-                    tuple((multispace0, char(','), multispace0, Object::parse)),
-                    |(_, _, _, object)| Some(object),
+                    tuple((opt(Whitespace::parse), char(','), opt(Whitespace::parse), Object::parse)),
+                    |(whitespace_before, _, whitespace_after, object)| {
+                        (whitespace_before, whitespace_after, object)
+                    },
                 ),
             ))),
             |maybe_items| Self {
-                list: maybe_items.into_iter().filter_map(|n| n).collect(),
+                list: maybe_items
+                    .into_iter()
+                    .map(|(whitespace_before, whitespace_after, object)| {
+                        (whitespace_before, whitespace_after, object)
+                    })
+                    .collect(),
             },
         )(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
-        cf_separated_list(cf_string(" , "), subject.list.iter().map(Object::gen))
+        cf_all(subject.list.iter().enumerate().map(
+            |(i, (whitespace_before_seperator, whitespace_after_seperator, object))| {
+                cf_tuple((
+                    Whitespace::gen_option(whitespace_before_seperator),
+                    match i == 0 {
+                        false => Box::new(cf_string(",")),
+                        true => Box::new(cf_string("")),
+                    },
+                    Whitespace::gen_option(whitespace_after_seperator),
+                    Object::gen(object),
+                ))
+            },
+        ))
     }
 }
 
@@ -558,7 +626,9 @@ impl<'a> PrefixDirective<'a> {
         })(input)
     }
 
-    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, Option<&'a str>, IRIReference), E>
+    fn parse_raw<E>(
+        input: &'a str,
+    ) -> IResult<&'a str, (Option<Whitespace>, Option<&'a str>, IRIReference), E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
@@ -573,7 +643,9 @@ impl<'a> PrefixDirective<'a> {
             multispace1,
             char('.'),
         ))(input)
-        .map(|(remainder, (leading, _, _, prefix, _, _, iri, _, _))| (remainder, (leading, prefix, iri)))
+        .map(|(remainder, (leading, _, _, prefix, _, _, iri, _, _))| {
+            (remainder, (leading, prefix, iri))
+        })
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -1094,6 +1166,7 @@ fn gen_option_cow_str<'a, W: Write + 'a>(
 mod tests {
     use super::*;
     use nom::error::VerboseError;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
     fn parse_whitespace() {
@@ -1105,6 +1178,15 @@ mod tests {
                 }
             )),
             Whitespace::parse::<VerboseError<&str>>("   ")
+        );
+        assert_eq!(
+            Ok((
+                ".",
+                Whitespace {
+                    whitespace: Cow::Borrowed("\n")
+                }
+            )),
+            Whitespace::parse::<VerboseError<&str>>("\n.")
         );
         assert_eq!(
             Ok((
@@ -1461,6 +1543,72 @@ mod tests {
     }
 
     #[test]
+    fn parse_object_list() {
+        // Single object
+        assert_eq!(
+            Ok((
+                "",
+                ObjectList {
+                    list: vec![(
+                        None,
+                        None,
+                        Object::IRI(IRI::IRIReference(IRIReference {
+                            iri: Cow::Borrowed("http://example.org/#green-goblin")
+                        }))
+                    )]
+                },
+            )),
+            ObjectList::parse::<VerboseError<&str>>("<http://example.org/#green-goblin>")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                ObjectList {
+                    list: vec![(
+                        None,
+                        Some(Whitespace::space()),
+                        Object::IRI(IRI::IRIReference(IRIReference {
+                            iri: Cow::Borrowed("http://example.org/#green-goblin")
+                        }))
+                    )]
+                },
+            )),
+            ObjectList::parse::<VerboseError<&str>>(" <http://example.org/#green-goblin>")
+        );
+        // Two objects
+        assert_eq!(
+            Ok((
+                "",
+                ObjectList {
+                    list: vec![
+                        (
+                            None,
+                            None,
+                            Object::IRI(IRI::IRIReference(IRIReference {
+                                iri: Cow::Borrowed("http://example.org/#green-goblin")
+                            }))
+                        ),
+                        (
+                            Some(Whitespace {
+                                whitespace: Cow::Borrowed(" ")
+                            }),
+                            Some(Whitespace {
+                                whitespace: Cow::Borrowed("  ")
+                            }),
+                            Object::IRI(IRI::IRIReference(IRIReference {
+                                iri: Cow::Borrowed("http://example.org/#blue-goblin")
+                            }))
+                        )
+                    ]
+                },
+            )),
+            ObjectList::parse::<VerboseError<&str>>(
+                "<http://example.org/#green-goblin> ,  <http://example.org/#blue-goblin>"
+            )
+        );
+    }
+
+    #[test]
     fn parse_simple_triple() {
         assert_eq!(
             Ok((
@@ -1472,16 +1620,22 @@ mod tests {
                     })),
                     PredicateObjectList {
                         list: vec![(
+                            Whitespace::space(),
                             IRI::IRIReference(IRIReference {
                                 iri: Cow::Borrowed(
                                     "http://www.perceive.net/schemas/relationship/enemyOf"
                                 )
                             }),
                             ObjectList {
-                                list: vec![Object::IRI(IRI::IRIReference(IRIReference {
-                                    iri: Cow::Borrowed("http://example.org/#green-goblin")
-                                }))]
-                            }
+                                list: vec![(
+                                    None,
+                                    Some(Whitespace::space()),
+                                    Object::IRI(IRI::IRIReference(IRIReference {
+                                        iri: Cow::Borrowed("http://example.org/#green-goblin")
+                                    }))
+                                )]
+                            },
+                            None,
                         )]
                     }
                 )
@@ -1593,12 +1747,83 @@ mod tests {
                     list: PredicateObjectList {
                         list: vec![
                             (
+                                Whitespace {
+                                    whitespace: Cow::Borrowed("\n                        ")
+                                },
                                 IRI::PrefixedName(PrefixedName {
                                     prefix: Some("ex".into()),
                                     name: Some("fullname".into())
                                 }),
                                 ObjectList {
-                                    list: vec![Object::Literal(Literal::RDFLiteral(RDFLiteral {
+                                    list: vec![(
+                                        None,
+                                        Some(Whitespace::space()),
+                                        Object::Literal(Literal::RDFLiteral(RDFLiteral {
+                                            string: TurtleString::StringLiteralQuote(
+                                                StringLiteralQuote {
+                                                    string: "Dave Beckett".into()
+                                                }
+                                            ),
+                                            language_tag: None,
+                                            iri: None
+                                        }))
+                                    )]
+                                },
+                                None,
+                            ),
+                            (
+                                Whitespace {
+                                    whitespace: Cow::Borrowed("\n                        ")
+                                },
+                                IRI::PrefixedName(PrefixedName {
+                                    prefix: Some("ex".into()),
+                                    name: Some("homePage".into())
+                                }),
+                                ObjectList {
+                                    list: vec![(
+                                        None,
+                                        Some(Whitespace::space()),
+                                        Object::IRI(IRI::IRIReference(IRIReference {
+                                            iri: "http://purl.org/net/dajobe/".into()
+                                        }))
+                                    )]
+                                },
+                                None,
+                            )
+                        ]
+                    },
+                    trailing_whitespace: Some(Whitespace {
+                        whitespace: Cow::Borrowed("\n                      ")
+                    })
+                },
+        )),
+        BlankNodePropertyList::parse::<VerboseError<&str>>(
+                r#"[
+                        ex:fullname "Dave Beckett";
+                        ex:homePage <http://purl.org/net/dajobe/>
+                      ]"#
+            )
+        );
+    }
+
+    #[test]
+    fn parse_predicate_property_list() {
+        assert_eq!(
+            Ok((
+                "",
+                PredicateObjectList {
+                    list: vec![
+                        (
+                            Whitespace::space(),
+                            IRI::PrefixedName(PrefixedName {
+                                prefix: Some("ex".into()),
+                                name: Some("fullname".into())
+                            }),
+                            ObjectList {
+                                list: vec![(
+                                    None,
+                                    Some(Whitespace::space()),
+                                    Object::Literal(Literal::RDFLiteral(RDFLiteral {
                                         string: TurtleString::StringLiteralQuote(
                                             StringLiteralQuote {
                                                 string: "Dave Beckett".into()
@@ -1606,29 +1831,35 @@ mod tests {
                                         ),
                                         language_tag: None,
                                         iri: None
-                                    }))]
-                                }
-                            ),
-                            (
-                                IRI::PrefixedName(PrefixedName {
-                                    prefix: Some("ex".into()),
-                                    name: Some("homePage".into())
-                                }),
-                                ObjectList {
-                                    list: vec![Object::IRI(IRI::IRIReference(IRIReference {
+                                    }))
+                                )]
+                            },
+                            None,
+                        ),
+                        (
+                            Whitespace {
+                                whitespace: Cow::Borrowed("\n")
+                            },
+                            IRI::PrefixedName(PrefixedName {
+                                prefix: Some("ex".into()),
+                                name: Some("homePage".into())
+                            }),
+                            ObjectList {
+                                list: vec![(
+                                    None,
+                                    Some(Whitespace::space()),
+                                    Object::IRI(IRI::IRIReference(IRIReference {
                                         iri: "http://purl.org/net/dajobe/".into()
-                                    }))]
-                                }
-                            )
-                        ]
-                    }
+                                    }))
+                                )]
+                            },
+                            None,
+                        )
+                    ]
                 }
             )),
-            BlankNodePropertyList::parse::<VerboseError<&str>>(
-                r#"[
-                        ex:fullname "Dave Beckett";
-                        ex:homePage <http://purl.org/net/dajobe/>
-                      ]"#
+            PredicateObjectList::parse::<VerboseError<&str>>(
+                " ex:fullname \"Dave Beckett\";\nex:homePage <http://purl.org/net/dajobe/>"
             )
         );
     }
@@ -1763,16 +1994,22 @@ mod tests {
                 })),
                 PredicateObjectList {
                     list: vec![(
+                        Whitespace::space(),
                         IRI::PrefixedName(PrefixedName {
                             prefix: Some(Cow::Borrowed("rdf")),
                             name: Some(Cow::Borrowed("type")),
                         }),
                         ObjectList {
-                            list: vec![Object::IRI(IRI::PrefixedName(PrefixedName {
-                                prefix: Some(Cow::Borrowed("owl")),
-                                name: Some(Cow::Borrowed("Ontology")),
-                            }))],
+                            list: vec![(
+                                None,
+                                Some(Whitespace::space()),
+                                Object::IRI(IRI::PrefixedName(PrefixedName {
+                                    prefix: Some(Cow::Borrowed("owl")),
+                                    name: Some(Cow::Borrowed("Ontology")),
+                                })),
+                            )],
                         },
+                        None,
                     )],
                 },
             )),
@@ -1847,7 +2084,7 @@ mod tests {
                     })),
                     Statement::Directive(Directive::Prefix(PrefixDirective {
                         leading_whitespace: Some(Whitespace {
-                            whitespace: Cow::Borrowed("\n")
+                            whitespace: Cow::Borrowed("\n"),
                         }),
                         prefix: None,
                         iri: IRIReference {
@@ -1856,7 +2093,7 @@ mod tests {
                     })),
                     Statement::Directive(Directive::Prefix(PrefixDirective {
                         leading_whitespace: Some(Whitespace {
-                            whitespace: Cow::Borrowed("\n")
+                            whitespace: Cow::Borrowed("\n"),
                         }),
                         prefix: Some(Cow::Borrowed("owl")),
                         iri: IRIReference {
