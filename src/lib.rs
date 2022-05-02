@@ -490,10 +490,7 @@ impl<'a> BlankNodePropertyList<'a> {
                 tuple((PredicateObjectList::parse, opt(Whitespace::parse))),
                 char(']'),
             ),
-            |(list, ws)| Self {
-                list,
-                trailing_whitespace: ws,
-            },
+            |(list, ws)| Self { list, trailing_whitespace: ws },
         )(input)
     }
 
@@ -537,18 +534,10 @@ impl<'a> ObjectList<'a> {
         map(
             many1(alt((
                 // First item
-                map(
-                    tuple((opt(Whitespace::parse), Object::parse)),
-                    |(ws, object)| (None, ws, object),
-                ),
+                map(tuple((opt(Whitespace::parse), Object::parse)), |(ws, object)| (None, ws, object)),
                 // Subsequent items delimited by whitespace and ','
                 map(
-                    tuple((
-                        opt(Whitespace::parse),
-                        char(','),
-                        opt(Whitespace::parse),
-                        Object::parse,
-                    )),
+                    tuple((opt(Whitespace::parse), char(','), opt(Whitespace::parse), Object::parse)),
                     |(whitespace_before, _, whitespace_after, object)| {
                         (whitespace_before, whitespace_after, object)
                     },
@@ -1331,7 +1320,7 @@ fn gen_option_cow_str<'a, W: Write + 'a>(
 mod tests {
     use super::*;
     use nom::error::VerboseError;
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
     fn parse_whitespace() {
@@ -2020,8 +2009,8 @@ mod tests {
                         whitespace: Cow::Borrowed("\n                      ")
                     })
                 },
-            )),
-            BlankNodePropertyList::parse::<VerboseError<&str>>(
+        )),
+        BlankNodePropertyList::parse::<VerboseError<&str>>(
                 r#"[
                         ex:fullname "Dave Beckett";
                         ex:homePage <http://purl.org/net/dajobe/>
