@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::ParseError::NotFullyParsed;
-use cookie_factory::combinator::string as cf_string;
+use cookie_factory::combinator::{string as cf_string};
 use cookie_factory::lib::std::io::Write;
 use cookie_factory::multi::all as cf_all;
 use cookie_factory::multi::separated_list as cf_separated_list;
@@ -233,6 +233,41 @@ impl<'a> Subject<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+/// A "Verb" can be used for inside a [PredicateObjectList]. It allows for using the character 'a'
+/// as a placeholder for `rdfs:type`.
+///
+/// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-verb>
+pub enum Verb<'a> {
+    A,
+    IRI(IRI<'a>)
+}
+
+impl<'a> Verb<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        alt((
+            map(IRI::parse, Self::IRI),
+            map(char('a'), |_| Self::A),
+        ))(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::IRI(iri) => Box::new(IRI::gen(iri)),
+            Self::A => Box::new(cf_string("a")),
+        }
+    }
+}
+
+impl<'a> From<IRI<'a>> for Verb<'a> {
+    fn from(original: IRI<'a>) -> Self {
+        Verb::IRI(original)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum IRI<'a> {
     IRIReference(IRIReference<'a>),
     PrefixedName(PrefixedName<'a>),
@@ -259,10 +294,9 @@ impl<'a> IRI<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PredicateObjectList<'a> {
-    // TODO: IRI should be "Verb" - Enum between IRI and literal "a"
     pub list: Vec<(
         Whitespace<'a>,
-        IRI<'a>,
+        Verb<'a>,
         ObjectList<'a>,
         Option<Whitespace<'a>>, /* Token: ';' */
     )>,
@@ -277,7 +311,7 @@ impl<'a> PredicateObjectList<'a> {
             many1(map(
                 tuple((
                     Whitespace::parse,
-                    IRI::parse,
+                    Verb::parse,
                     ObjectList::parse,
                     opt(tuple((opt(Whitespace::parse), tag(";")))),
                 )),
@@ -303,7 +337,7 @@ impl<'a> PredicateObjectList<'a> {
                 .map(|(leading, verb, object_list, ws_2)| {
                     cf_tuple((
                         Whitespace::gen(leading),
-                        IRI::gen(verb),
+                        Verb::gen(verb),
                         ObjectList::gen(object_list),
                         Whitespace::gen_option(ws_2),
                     ))
@@ -1166,7 +1200,7 @@ fn gen_option_cow_str<'a, W: Write + 'a>(
 mod tests {
     use super::*;
     use nom::error::VerboseError;
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::{assert_eq};
 
     #[test]
     fn parse_whitespace() {
@@ -1250,6 +1284,36 @@ mod tests {
             IRIReference::parse::<VerboseError<&str>>("<http://example.com/ontology>")
         );
         assert!(IRIReference::parse::<VerboseError<&str>>("<http://example.com/ontology").is_err());
+    }
+
+    #[test]
+    fn parse_verb() {
+        assert_eq!(
+            Ok((
+                "",
+                Verb::IRI(IRI::IRIReference(IRIReference {
+                    iri: Cow::Borrowed("http://example.com/ontology")
+                }))
+            )),
+            Verb::parse::<VerboseError<&str>>("<http://example.com/ontology>")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                Verb::A
+            )),
+            Verb::parse::<VerboseError<&str>>("a")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                Verb::IRI(IRI::PrefixedName(PrefixedName {
+                    prefix: Some(Cow::Borrowed("abc")),
+                    name: Some(Cow::Borrowed("def"))
+                }))
+            )),
+            Verb::parse::<VerboseError<&str>>("abc:def")
+        );
     }
 
     #[test]
@@ -1625,7 +1689,7 @@ mod tests {
                                 iri: Cow::Borrowed(
                                     "http://www.perceive.net/schemas/relationship/enemyOf"
                                 )
-                            }),
+                            }).into(),
                             ObjectList {
                                 list: vec![(
                                     None,
@@ -1753,7 +1817,7 @@ mod tests {
                                 IRI::PrefixedName(PrefixedName {
                                     prefix: Some("ex".into()),
                                     name: Some("fullname".into())
-                                }),
+                                }).into(),
                                 ObjectList {
                                     list: vec![(
                                         None,
@@ -1778,7 +1842,7 @@ mod tests {
                                 IRI::PrefixedName(PrefixedName {
                                     prefix: Some("ex".into()),
                                     name: Some("homePage".into())
-                                }),
+                                }).into(),
                                 ObjectList {
                                     list: vec![(
                                         None,
@@ -1818,7 +1882,7 @@ mod tests {
                             IRI::PrefixedName(PrefixedName {
                                 prefix: Some("ex".into()),
                                 name: Some("fullname".into())
-                            }),
+                            }).into(),
                             ObjectList {
                                 list: vec![(
                                     None,
@@ -1843,7 +1907,7 @@ mod tests {
                             IRI::PrefixedName(PrefixedName {
                                 prefix: Some("ex".into()),
                                 name: Some("homePage".into())
-                            }),
+                            }).into(),
                             ObjectList {
                                 list: vec![(
                                     None,
@@ -1998,7 +2062,7 @@ mod tests {
                         IRI::PrefixedName(PrefixedName {
                             prefix: Some(Cow::Borrowed("rdf")),
                             name: Some(Cow::Borrowed("type")),
-                        }),
+                        }).into(),
                         ObjectList {
                             list: vec![(
                                 None,

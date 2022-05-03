@@ -37,8 +37,6 @@ fn roundtrip_wildtype_file(file_name: &str) {
 }
 
 #[test]
-#[ignore]
-// Doesn't handle special case of verb `a` as a replacement for `rdfs:type`
 fn example1() {
     roundtrip_example_file("example1.ttl");
 }
