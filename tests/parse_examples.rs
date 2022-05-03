@@ -21,7 +21,7 @@ fn parse_wildtype_file(file_name: &str) {
 
 #[test]
 #[ignore]
-// TODO: There is a comment in the middle of a statement (build custom parser for whitespace, and start treating comments as whitespace)
+// Doesn't handle special case of verb `a` as a replacement for `rdfs:type`
 fn example1() {
     parse_example_file("example1.ttl");
 }
@@ -162,6 +162,12 @@ fn example25() {
 #[ignore]
 fn example26() {
     parse_example_file("example26.ttl");
+}
+
+#[test]
+// Variant of reference example1 where "a" is replaced with "rdfs:type"
+fn example1_without_a() {
+    parse_wildtype_file("example1_without_a.ttl");
 }
 
 #[test]
