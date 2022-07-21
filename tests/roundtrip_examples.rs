@@ -198,3 +198,13 @@ fn example_nested_lists() {
 fn example_nested_lists2() {
     roundtrip_wildtype_file("nested_lists2.ttl");
 }
+
+#[test]
+fn example24_simple1() {
+    roundtrip_wildtype_file("example24_simple1.ttl");
+}
+
+#[test]
+fn example24_simple2() {
+    roundtrip_wildtype_file("example24_simple2.ttl");
+}

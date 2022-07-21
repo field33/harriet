@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::ParseError::NotFullyParsed;
-use cookie_factory::combinator::{string as cf_string};
+use cookie_factory::combinator::string as cf_string;
 use cookie_factory::lib::std::io::Write;
 use cookie_factory::multi::all as cf_all;
 use cookie_factory::multi::separated_list as cf_separated_list;
@@ -209,7 +209,7 @@ impl<'a> Triples<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Subject<'a> {
     IRI(IRI<'a>),
-    // TOOD: BlankNode
+    BlankNode(BlankNode<'a>),
     Collection(Collection<'a>),
 }
 
@@ -219,6 +219,8 @@ impl<'a> Subject<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
+            // BlankNode should be parsed before IRI, or it might be mis-parsed as PrefixedName
+            map(BlankNode::parse, Self::BlankNode),
             map(IRI::parse, Self::IRI),
             map(Collection::parse, Self::Collection),
         ))(input)
@@ -226,6 +228,7 @@ impl<'a> Subject<'a> {
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
+            Self::BlankNode(blank_node) => Box::new(BlankNode::gen(blank_node)),
             Self::IRI(iri) => Box::new(IRI::gen(iri)),
             Self::Collection(collection) => Box::new(Collection::gen(collection)),
         }
@@ -239,18 +242,15 @@ impl<'a> Subject<'a> {
 /// Parsing reference: <https://www.w3.org/TR/turtle/#grammar-production-verb>
 pub enum Verb<'a> {
     A,
-    IRI(IRI<'a>)
+    IRI(IRI<'a>),
 }
 
 impl<'a> Verb<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
-        where
-            E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        alt((
-            map(IRI::parse, Self::IRI),
-            map(char('a'), |_| Self::A),
-        ))(input)
+        alt((map(IRI::parse, Self::IRI), map(char('a'), |_| Self::A)))(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
@@ -289,6 +289,70 @@ impl<'a> IRI<'a> {
             Self::IRIReference(iri) => Box::new(IRIReference::gen(iri)),
             Self::PrefixedName(prefixed_name) => Box::new(PrefixedName::gen(prefixed_name)),
         }
+    }
+}
+
+/// RDF Blank Nodes
+///
+/// Reference section: <https://www.w3.org/TR/turtle/#BNodes>
+#[derive(Debug, PartialEq, Eq)]
+pub struct BlankNode<'a> {
+    /// Parsing:
+    /// <https://www.w3.org/TR/turtle/#grammar-production-BLANK_NODE_LABEL>
+    /// `[141s] BLANK_NODE_LABEL ::= '_:' (PN_CHARS_U | [0-9]) ((PN_CHARS | '.')* PN_CHARS)?`
+    pub label: Cow<'a, str>,
+}
+
+impl<'a> BlankNode<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((
+                tag("_:"),
+                tuple((
+                    many1(satisfy(Self::is_blank_node_label_first_char)),
+                    many0(satisfy(Self::is_blank_node_label_middle_char)),
+                    many0(satisfy(Self::is_blank_node_label_end_char)),
+                )),
+            )),
+            |(_tag, (first_label_char, middle_label_chars, end_label_char))| Self {
+                label: Cow::Owned(
+                    first_label_char
+                        .into_iter()
+                        .chain(middle_label_chars.into_iter())
+                        .chain(end_label_char.into_iter())
+                        .collect(),
+                ),
+            },
+        )(input)
+    }
+
+    pub fn is_blank_node_label_first_char(khar: char) -> bool {
+        PrefixedName::is_pn_chars_base_with_underscore(khar) || matches!(khar, '0'..='9')
+    }
+
+    pub fn is_blank_node_label_middle_char(khar: char) -> bool {
+        Self::is_blank_node_char_with_additional_permitted(khar) || matches!(khar, '.')
+    }
+
+    pub fn is_blank_node_label_end_char(khar: char) -> bool {
+        Self::is_blank_node_char_with_additional_permitted(khar)
+    }
+
+    /// > The characters `-`, `U+00B7`, `U+0300` to `U+036F` and `U+203F` to `U+2040` are permitted anywhere except the first character.
+    ///
+    /// This is equivalent to `PN_CHARS`
+    pub fn is_blank_node_char_with_additional_permitted(khar: char) -> bool {
+        PrefixedName::is_pn_chars(khar)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        Box::new(cf_tuple((
+            cf_string("_:"),
+            cf_string(&subject.label),
+        )))
     }
 }
 
@@ -359,7 +423,6 @@ impl<'a> PredicateObjectList<'a> {
 pub struct BlankNodePropertyList<'a> {
     pub list: PredicateObjectList<'a>,
     pub trailing_whitespace: Option<Whitespace<'a>>,
-
 }
 
 impl<'a> BlankNodePropertyList<'a> {
@@ -373,7 +436,10 @@ impl<'a> BlankNodePropertyList<'a> {
                 tuple((PredicateObjectList::parse, opt(Whitespace::parse))),
                 char(']'),
             ),
-            |(list, ws)| Self { list, trailing_whitespace: ws },
+            |(list, ws)| Self {
+                list,
+                trailing_whitespace: ws,
+            },
         )(input)
     }
 
@@ -417,10 +483,18 @@ impl<'a> ObjectList<'a> {
         map(
             many1(alt((
                 // First item
-                map(tuple((opt(Whitespace::parse), Object::parse)), |(ws, object)| (None, ws, object)),
+                map(
+                    tuple((opt(Whitespace::parse), Object::parse)),
+                    |(ws, object)| (None, ws, object),
+                ),
                 // Subsequent items delimited by whitespace and ','
                 map(
-                    tuple((opt(Whitespace::parse), char(','), opt(Whitespace::parse), Object::parse)),
+                    tuple((
+                        opt(Whitespace::parse),
+                        char(','),
+                        opt(Whitespace::parse),
+                        Object::parse,
+                    )),
                     |(whitespace_before, _, whitespace_after, object)| {
                         (whitespace_before, whitespace_after, object)
                     },
@@ -457,7 +531,7 @@ impl<'a> ObjectList<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Object<'a> {
     IRI(IRI<'a>),
-    // TODO: BlankNode
+    BlankNode(BlankNode<'a>),
     Collection(Collection<'a>),
     BlankNodePropertyList(BlankNodePropertyList<'a>),
     Literal(Literal<'a>),
@@ -469,6 +543,8 @@ impl<'a> Object<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
+            // BlankNode should be parsed before IRI, or it might be mis-parsed as PrefixedName
+            map(BlankNode::parse, Self::BlankNode),
             map(IRI::parse, Self::IRI),
             map(Collection::parse, Self::Collection),
             map(BlankNodePropertyList::parse, Self::BlankNodePropertyList),
@@ -478,6 +554,7 @@ impl<'a> Object<'a> {
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
+            Self::BlankNode(blank_node) => Box::new(BlankNode::gen(blank_node)),
             Self::IRI(iri) => Box::new(IRI::gen(iri)),
             Self::Collection(collection) => Box::new(Collection::gen(collection)),
             Self::BlankNodePropertyList(list) => Box::new(BlankNodePropertyList::gen(list)),
@@ -812,7 +889,7 @@ impl<'a> PrefixedName<'a> {
     }
 
     // [163s] 	PN_CHARS_BASE 	::= 	[A-Z] | [a-z] | [#x00C0-#x00D6] | [#x00D8-#x00F6] | [#x00F8-#x02FF] | [#x0370-#x037D] | [#x037F-#x1FFF] | [#x200C-#x200D] | [#x2070-#x218F] | [#x2C00-#x2FEF] | [#x3001-#xD7FF] | [#xF900-#xFDCF] | [#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
-    fn is_pn_chars_base(chchar: char) -> bool {
+    pub fn is_pn_chars_base(chchar: char) -> bool {
         matches!(chchar,
         'A'..='Z'
         | 'a'..='z'
@@ -831,12 +908,12 @@ impl<'a> PrefixedName<'a> {
     }
 
     // [164s] 	PN_CHARS_U 	::= 	PN_CHARS_BASE | '_'
-    fn is_pn_chars_base_with_underscore(khar: char) -> bool {
+    pub fn is_pn_chars_base_with_underscore(khar: char) -> bool {
         Self::is_pn_chars_base(khar) || matches!(khar, '_')
     }
 
     // [166s] 	PN_CHARS 	::= 	PN_CHARS_U | '-' | [0-9] | #x00B7 | [#x0300-#x036F] | [#x203F-#x2040]
-    fn is_pn_chars(khar: char) -> bool {
+    pub fn is_pn_chars(khar: char) -> bool {
         Self::is_pn_chars_base_with_underscore(khar)
             || matches!(khar,
                 '-'
@@ -1200,7 +1277,7 @@ fn gen_option_cow_str<'a, W: Write + 'a>(
 mod tests {
     use super::*;
     use nom::error::VerboseError;
-    use pretty_assertions::{assert_eq};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn parse_whitespace() {
@@ -1297,13 +1374,7 @@ mod tests {
             )),
             Verb::parse::<VerboseError<&str>>("<http://example.com/ontology>")
         );
-        assert_eq!(
-            Ok((
-                "",
-                Verb::A
-            )),
-            Verb::parse::<VerboseError<&str>>("a")
-        );
+        assert_eq!(Ok(("", Verb::A)), Verb::parse::<VerboseError<&str>>("a"));
         assert_eq!(
             Ok((
                 "",
@@ -1412,6 +1483,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!("owl:Thing".as_bytes(), &mem[..written_bytes as usize]);
+    }
+
+    #[test]
+    fn parse_blank_node() {
+        assert_eq!(
+            Ok((
+                "",
+                BlankNode {
+                    label: Cow::Borrowed("blankNode")
+                }
+            )),
+            BlankNode::parse::<VerboseError<&str>>(r#"_:blankNode"#)
+        );
+        // "The characters _ and digits may appear anywhere in a blank node label."
+        assert_eq!(
+            Ok((
+                "",
+                BlankNode {
+                    label: Cow::Borrowed("_blank_Node_")
+                }
+            )),
+            BlankNode::parse::<VerboseError<&str>>(r#"_:_blank_Node_"#)
+        );
+        assert_eq!(
+            Ok((
+                "",
+                BlankNode {
+                    label: Cow::Borrowed("1blank1Node1")
+                }
+            )),
+            BlankNode::parse::<VerboseError<&str>>(r#"_:1blank1Node1"#)
+        );
     }
 
     #[test]
@@ -1689,7 +1792,8 @@ mod tests {
                                 iri: Cow::Borrowed(
                                     "http://www.perceive.net/schemas/relationship/enemyOf"
                                 )
-                            }).into(),
+                            })
+                            .into(),
                             ObjectList {
                                 list: vec![(
                                     None,
@@ -1817,7 +1921,8 @@ mod tests {
                                 IRI::PrefixedName(PrefixedName {
                                     prefix: Some("ex".into()),
                                     name: Some("fullname".into())
-                                }).into(),
+                                })
+                                .into(),
                                 ObjectList {
                                     list: vec![(
                                         None,
@@ -1842,7 +1947,8 @@ mod tests {
                                 IRI::PrefixedName(PrefixedName {
                                     prefix: Some("ex".into()),
                                     name: Some("homePage".into())
-                                }).into(),
+                                })
+                                .into(),
                                 ObjectList {
                                     list: vec![(
                                         None,
@@ -1860,8 +1966,8 @@ mod tests {
                         whitespace: Cow::Borrowed("\n                      ")
                     })
                 },
-        )),
-        BlankNodePropertyList::parse::<VerboseError<&str>>(
+            )),
+            BlankNodePropertyList::parse::<VerboseError<&str>>(
                 r#"[
                         ex:fullname "Dave Beckett";
                         ex:homePage <http://purl.org/net/dajobe/>
@@ -1882,7 +1988,8 @@ mod tests {
                             IRI::PrefixedName(PrefixedName {
                                 prefix: Some("ex".into()),
                                 name: Some("fullname".into())
-                            }).into(),
+                            })
+                            .into(),
                             ObjectList {
                                 list: vec![(
                                     None,
@@ -1907,7 +2014,8 @@ mod tests {
                             IRI::PrefixedName(PrefixedName {
                                 prefix: Some("ex".into()),
                                 name: Some("homePage".into())
-                            }).into(),
+                            })
+                            .into(),
                             ObjectList {
                                 list: vec![(
                                     None,
@@ -2062,7 +2170,8 @@ mod tests {
                         IRI::PrefixedName(PrefixedName {
                             prefix: Some(Cow::Borrowed("rdf")),
                             name: Some(Cow::Borrowed("type")),
-                        }).into(),
+                        })
+                        .into(),
                         ObjectList {
                             list: vec![(
                                 None,
