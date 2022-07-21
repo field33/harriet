@@ -20,8 +20,6 @@ fn parse_wildtype_file(file_name: &str) {
 }
 
 #[test]
-#[ignore]
-// TODO: There is a comment in the middle of a statement (build custom parser for whitespace, and start treating comments as whitespace)
 fn example1() {
     parse_example_file("example1.ttl");
 }
@@ -91,6 +89,7 @@ fn example13() {
 }
 
 #[test]
+// Blank node
 fn example14() {
     parse_example_file("example14.ttl");
 }
@@ -148,6 +147,7 @@ fn example23() {
 
 #[test]
 #[ignore]
+// Blank nodes + numbers
 fn example24() {
     parse_example_file("example24.ttl");
 }
@@ -160,8 +160,15 @@ fn example25() {
 
 #[test]
 #[ignore]
+// Blank nodes + numbers
 fn example26() {
     parse_example_file("example26.ttl");
+}
+
+#[test]
+// Variant of reference example1 where "a" is replaced with "rdfs:type"
+fn example1_without_a() {
+    parse_wildtype_file("example1_without_a.ttl");
 }
 
 #[test]
@@ -174,4 +181,14 @@ fn example_nested_lists() {
 // Slightly more expanded example of nested blankNodePropertyList
 fn example_nested_lists2() {
     parse_wildtype_file("nested_lists2.ttl");
+}
+
+#[test]
+fn example24_simple1() {
+    parse_wildtype_file("example24_simple1.ttl");
+}
+
+#[test]
+fn example24_simple2() {
+    parse_wildtype_file("example24_simple2.ttl");
 }
