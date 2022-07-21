@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod triple_production;
+
 use crate::ParseError::NotFullyParsed;
 use cookie_factory::combinator::string as cf_string;
 use cookie_factory::lib::std::io::Write;
@@ -19,7 +21,7 @@ use std::borrow::Cow;
 use std::borrow::Cow::Borrowed;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurtleDocument<'a> {
     pub statements: Vec<Statement<'a>>,
     pub trailing_whitespace: Option<Whitespace<'a>>,
@@ -77,7 +79,7 @@ impl ToString for TurtleDocument<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement<'a> {
     Directive(Directive<'a>),
     Triples(Triples<'a>),
@@ -163,7 +165,7 @@ impl<'a> Whitespace<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Triples<'a> {
     Labeled(Option<Whitespace<'a>>, Subject<'a>, PredicateObjectList<'a>),
     // Labeled()
@@ -206,7 +208,7 @@ impl<'a> Triples<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject<'a> {
     IRI(IRI<'a>),
     BlankNode(BlankNode<'a>),
@@ -235,7 +237,7 @@ impl<'a> Subject<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// A "Verb" can be used for inside a [PredicateObjectList]. It allows for using the character 'a'
 /// as a placeholder for `rdfs:type`.
 ///
@@ -267,7 +269,7 @@ impl<'a> From<IRI<'a>> for Verb<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IRI<'a> {
     IRIReference(IRIReference<'a>),
     PrefixedName(PrefixedName<'a>),
@@ -410,7 +412,7 @@ impl<'a> BlankNodeAnonymous<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PredicateObjectList<'a> {
     pub list: Vec<(
         Whitespace<'a>,
@@ -473,7 +475,7 @@ impl<'a> PredicateObjectList<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlankNodePropertyList<'a> {
     pub list: PredicateObjectList<'a>,
     pub trailing_whitespace: Option<Whitespace<'a>>,
@@ -518,7 +520,7 @@ impl<'a> BlankNodePropertyList<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectList<'a> {
     pub list: Vec<(
         // Whitespace before separator (will be None on first element)
@@ -582,7 +584,7 @@ impl<'a> ObjectList<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Object<'a> {
     IRI(IRI<'a>),
     BlankNode(BlankNode<'a>),
@@ -617,7 +619,7 @@ impl<'a> Object<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Collection<'a> {
     pub list: Vec<Object<'a>>,
 }
@@ -979,7 +981,7 @@ impl<'a> PrefixedName<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Literal<'a> {
     RDFLiteral(RDFLiteral<'a>),
     NumericLiteral(NumericLiteral<'a>),
@@ -1007,7 +1009,7 @@ impl<'a> Literal<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RDFLiteral<'a> {
     pub string: TurtleString<'a>,
     pub language_tag: Option<Cow<'a, str>>,
@@ -1085,7 +1087,7 @@ impl<'a> RDFLiteral<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumericLiteral<'a> {
     Integer(Integer<'a>),
     // Decimal(Decimal<'a>),
@@ -1113,7 +1115,7 @@ impl<'a> NumericLiteral<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Integer<'a> {
     pub sign: Option<Cow<'a, str>>,
     pub number_literal: Cow<'a, str>,
@@ -1152,17 +1154,17 @@ impl<'a> Integer<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decimal<'a> {
     pub string: Cow<'a, str>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Double<'a> {
     pub string: Cow<'a, str>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BooleanLiteral {
     pub bool: bool,
 }
@@ -1186,7 +1188,7 @@ impl BooleanLiteral {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurtleString<'a> {
     StringLiteralQuote(StringLiteralQuote<'a>),
     StringLiteralSingleQuote(StringLiteralSingleQuote<'a>),
@@ -1238,7 +1240,7 @@ impl<'a> ToString for TurtleString<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StringLiteralQuote<'a> {
     pub string: Cow<'a, str>,
 }
@@ -1281,7 +1283,7 @@ impl<'a> StringLiteralQuote<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StringLiteralSingleQuote<'a> {
     pub string: Cow<'a, str>,
 }
@@ -1325,7 +1327,7 @@ impl<'a> StringLiteralSingleQuote<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StringLiteralLongQuote<'a> {
     pub string: Cow<'a, str>,
 }
@@ -1360,7 +1362,7 @@ impl<'a> StringLiteralLongQuote<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StringLiteralLongSingleQuote<'a> {
     pub string: Cow<'a, str>,
 }
