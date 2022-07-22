@@ -1,7 +1,9 @@
 use crate::{
-    Directive, IRIReference, Object, Statement, Subject, Triples, TurtleDocument, Verb, IRI,
+    BlankNode, BlankNodeLabel, Directive, IRIReference, Object, Statement, Subject, Triples,
+    TurtleDocument, Verb, IRI,
 };
 use anyhow::{anyhow, Context, Error};
+use snowflake::ProcessUniqueId;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -44,11 +46,16 @@ impl TripleProducer {
                             match subject {
                                 Subject::IRI(iri) => state
                                     .set_current_subject(RdfSubject::IRI(state.convert_iri(iri)?)),
-                                Subject::BlankNode(_) => {
-                                    // TODO
-                                    Err(anyhow!(
-                                        "BlankNodes are not supported in TripleProducer yet."
-                                    ))?;
+                                Subject::BlankNode(blank_node) => {
+                                    let current_blank_node = match blank_node {
+                                        BlankNode::Anonymous(_) => state.allocate_blank_node(),
+                                        BlankNode::Labeled(labled) => {
+                                            state.allocate_labeled_blank_node(labled)
+                                        }
+                                    };
+                                    state.set_current_subject(RdfSubject::BlankNode(
+                                        current_blank_node,
+                                    ))
                                 }
                                 Subject::Collection(_) => {
                                     // TODO
@@ -65,10 +72,38 @@ impl TripleProducer {
                                             &mut triples,
                                             RdfObject::IRI(state.convert_iri(iri)?),
                                         )?,
-                                        Object::Literal(_) => {}
-                                        Object::BlankNode(_) => {}
-                                        Object::Collection(_) => {}
-                                        Object::BlankNodePropertyList(_) => {}
+                                        Object::Literal(_) => {
+                                            // TODO
+                                            Err(anyhow!(
+                                                "Construct not supported in TripleProducer yet."
+                                            ))?;
+                                        }
+                                        Object::BlankNode(blank_node) => {
+                                            let current_blank_node = match blank_node {
+                                                BlankNode::Anonymous(_) => {
+                                                    state.allocate_blank_node()
+                                                }
+                                                BlankNode::Labeled(labled) => {
+                                                    state.allocate_labeled_blank_node(labled)
+                                                }
+                                            };
+                                            state.produce_triple(
+                                                &mut triples,
+                                                RdfObject::BlankNode(current_blank_node),
+                                            )?;
+                                        }
+                                        Object::Collection(_) => {
+                                            // TODO
+                                            Err(anyhow!(
+                                                "Construct not supported in TripleProducer yet."
+                                            ))?;
+                                        }
+                                        Object::BlankNodePropertyList(_) => {
+                                            // TODO
+                                            Err(anyhow!(
+                                                "Construct not supported in TripleProducer yet."
+                                            ))?;
+                                        }
                                     }
                                 }
                             }
@@ -112,6 +147,19 @@ impl<'a> ProducerState<'a> {
                 prefix_dir.iri.iri,
             ),
         }
+    }
+
+    fn allocate_labeled_blank_node(&mut self, blank_node: BlankNodeLabel) -> RdfBlankNode {
+        // PERFORMANCE: May be optimized
+        let possible_new_blank_node = self.allocate_blank_node();
+        self.blank_node_labels
+            .entry(blank_node.label.to_string())
+            .or_insert(possible_new_blank_node)
+            .to_owned()
+    }
+
+    fn allocate_blank_node(&self) -> RdfBlankNode {
+        RdfBlankNode::new()
     }
 
     fn produce_triple<O: Into<RdfObject<'a>>>(
@@ -217,5 +265,13 @@ pub struct RdfLiteral<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RdfBlankNode {
-    internal_id: u32,
+    internal_id: ProcessUniqueId,
+}
+
+impl RdfBlankNode {
+    fn new() -> Self {
+        Self {
+            internal_id: ProcessUniqueId::new(),
+        }
+    }
 }
