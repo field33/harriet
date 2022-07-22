@@ -1,7 +1,4 @@
-use crate::{
-    BlankNode, BlankNodeLabel, Directive, IRIReference, Object, Statement, Subject, Triples,
-    TurtleDocument, Verb, IRI,
-};
+use crate::{BlankNode, BlankNodeLabel, Directive, IRIReference, Object, Statement, Subject, Triples, TurtleDocument, Verb, IRI, Literal};
 use anyhow::{anyhow, Context, Error};
 use snowflake::ProcessUniqueId;
 use std::borrow::Cow;
@@ -72,11 +69,23 @@ impl TripleProducer {
                                             &mut triples,
                                             RdfObject::IRI(state.convert_iri(iri)?),
                                         )?,
-                                        Object::Literal(_) => {
-                                            // TODO
-                                            Err(anyhow!(
-                                                "Construct not supported in TripleProducer yet."
+                                        Object::Literal(literal) => {
+                                            match literal {
+                                                Literal::RDFLiteral(rdf_literal) => {
+                                                    // TODO: handle implied datatype iris
+                                                    state.produce_triple(&mut triples, RdfObject::Literal(RdfLiteral {
+                                                        lexical_form: Cow::Owned(rdf_literal.string.to_string()),
+                                                        datatype_iri: rdf_literal.iri.map(|n| state.convert_iri(n)).transpose()?,
+                                                        // TODO: language tag
+                                                        language_tag: None
+                                                    }))?;
+                                                }
+                                                Literal::BooleanLiteral(_) => {
+                                                    Err(anyhow!(
+                                                "Boolean Literal not supported in TripleProducer yet."
                                             ))?;
+                                                }
+                                            }
                                         }
                                         Object::BlankNode(blank_node) => {
                                             let current_blank_node = match blank_node {
@@ -95,13 +104,13 @@ impl TripleProducer {
                                         Object::Collection(_) => {
                                             // TODO
                                             Err(anyhow!(
-                                                "Construct not supported in TripleProducer yet."
+                                                "Collection not supported in TripleProducer yet."
                                             ))?;
                                         }
                                         Object::BlankNodePropertyList(_) => {
                                             // TODO
                                             Err(anyhow!(
-                                                "Construct not supported in TripleProducer yet."
+                                                "BlankNodePropertyList not supported in TripleProducer yet."
                                             ))?;
                                         }
                                     }
@@ -203,8 +212,7 @@ impl<'a> ProducerState<'a> {
     fn convert_verb(&self, verb: Verb<'a>) -> Result<RdfPredicate<'a>, Error> {
         Ok(match verb {
             Verb::A => {
-                // TODO: implement
-                Err(anyhow!("Conversion of `a` verb not implemented yet."))?
+                RdfPredicate::IRI(iri_constants::RDF_TYPE)
             }
             Verb::IRI(iri) => RdfPredicate::IRI(self.convert_iri(iri)?),
         })
@@ -259,7 +267,7 @@ pub struct RdfIri<'a> {
 #[derive(Debug, Clone)]
 pub struct RdfLiteral<'a> {
     pub lexical_form: Cow<'a, str>,
-    pub datatype_iri: Cow<'a, str>,
+    pub datatype_iri: Option<RdfIri<'a>>,
     pub language_tag: Option<Cow<'a, str>>,
 }
 
@@ -274,4 +282,13 @@ impl RdfBlankNode {
             internal_id: ProcessUniqueId::new(),
         }
     }
+}
+
+mod iri_constants {
+    use std::borrow::Cow;
+    use crate::triple_production::RdfIri;
+
+    pub const RDF_TYPE: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+    };
 }
