@@ -294,16 +294,46 @@ impl<'a> IRI<'a> {
 
 /// RDF Blank Nodes
 ///
+/// May either be a [BlankNodeLabel] or an anonymous blank node
+///
+/// Parsing: <https://www.w3.org/TR/turtle/#grammar-production-BlankNode>
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlankNode<'a> {
+    Labeled(BlankNodeLabel<'a>),
+    Anonymous(BlankNodeAnonymous<'a>),
+}
+
+impl<'a> BlankNode<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        alt((
+            map(BlankNodeLabel::parse, Self::Labeled),
+            map(BlankNodeAnonymous::parse, Self::Anonymous),
+        ))(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::Labeled(blank_node) => Box::new(BlankNodeLabel::gen(blank_node)),
+            Self::Anonymous(blank_node) => Box::new(BlankNodeAnonymous::gen(blank_node)),
+        }
+    }
+}
+
+/// Labled RDF Blank Nodes
+///
 /// Reference section: <https://www.w3.org/TR/turtle/#BNodes>
-#[derive(Debug, PartialEq, Eq)]
-pub struct BlankNode<'a> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlankNodeLabel<'a> {
     /// Parsing:
     /// <https://www.w3.org/TR/turtle/#grammar-production-BLANK_NODE_LABEL>
     /// `[141s] BLANK_NODE_LABEL ::= '_:' (PN_CHARS_U | [0-9]) ((PN_CHARS | '.')* PN_CHARS)?`
     pub label: Cow<'a, str>,
 }
 
-impl<'a> BlankNode<'a> {
+impl<'a> BlankNodeLabel<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
@@ -349,9 +379,33 @@ impl<'a> BlankNode<'a> {
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        Box::new(cf_tuple((cf_string("_:"), cf_string(&subject.label))))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlankNodeAnonymous<'a> {
+    pub whitespace: Option<Whitespace<'a>>,
+}
+
+impl<'a> BlankNodeAnonymous<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((tag("["), opt(Whitespace::parse), tag("]"))),
+            |(_bracket_open, whitespace_opt, _bracket_close)| Self {
+                whitespace: whitespace_opt,
+            },
+        )(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         Box::new(cf_tuple((
-            cf_string("_:"),
-            cf_string(&subject.label),
+            cf_string("["),
+            Whitespace::gen_option(&subject.whitespace),
+            cf_string("]"),
         )))
     }
 }
@@ -1490,9 +1544,9 @@ mod tests {
         assert_eq!(
             Ok((
                 "",
-                BlankNode {
+                BlankNode::Labeled(BlankNodeLabel {
                     label: Cow::Borrowed("blankNode")
-                }
+                })
             )),
             BlankNode::parse::<VerboseError<&str>>(r#"_:blankNode"#)
         );
@@ -1500,18 +1554,18 @@ mod tests {
         assert_eq!(
             Ok((
                 "",
-                BlankNode {
+                BlankNode::Labeled(BlankNodeLabel {
                     label: Cow::Borrowed("_blank_Node_")
-                }
+                })
             )),
             BlankNode::parse::<VerboseError<&str>>(r#"_:_blank_Node_"#)
         );
         assert_eq!(
             Ok((
                 "",
-                BlankNode {
+                BlankNode::Labeled(BlankNodeLabel {
                     label: Cow::Borrowed("1blank1Node1")
-                }
+                })
             )),
             BlankNode::parse::<VerboseError<&str>>(r#"_:1blank1Node1"#)
         );
