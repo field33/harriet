@@ -122,13 +122,11 @@ fn example19() {
 }
 
 #[test]
-#[ignore]
 fn example20() {
     triples_example_file("example20.ttl");
 }
 
 #[test]
-#[ignore]
 fn example21() {
     triples_example_file("example21.ttl");
 }

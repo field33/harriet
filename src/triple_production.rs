@@ -1,8 +1,9 @@
-use crate::{BlankNode, BlankNodeLabel, Directive, IRIReference, Object, Statement, Subject, Triples, TurtleDocument, Verb, IRI, Literal};
-use anyhow::{anyhow, Context, Error};
+use crate::{BlankNode, BlankNodeLabel, Directive, IRIReference, Literal, Object, PredicateObjectList, Statement, Subject, Triples, TurtleDocument, Verb, IRI, Collection};
+use anyhow::{anyhow, bail, Context, Error};
 use snowflake::ProcessUniqueId;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use either::Either;
 
 /// A triple producer, produces is able to produce a stream of RDF Triples based on a parsed Turtle document.
 ///
@@ -61,61 +62,11 @@ impl TripleProducer {
                                     ))?;
                                 }
                             }
-                            for (_, verb, object_list, _) in predicate_object_list.list {
-                                state.set_current_predicate(state.convert_verb(verb)?);
-                                for (_, _, object) in object_list.list {
-                                    match object {
-                                        Object::IRI(iri) => state.produce_triple(
-                                            &mut triples,
-                                            RdfObject::IRI(state.convert_iri(iri)?),
-                                        )?,
-                                        Object::Literal(literal) => {
-                                            match literal {
-                                                Literal::RDFLiteral(rdf_literal) => {
-                                                    // TODO: handle implied datatype iris
-                                                    state.produce_triple(&mut triples, RdfObject::Literal(RdfLiteral {
-                                                        lexical_form: Cow::Owned(rdf_literal.string.to_string()),
-                                                        datatype_iri: rdf_literal.iri.map(|n| state.convert_iri(n)).transpose()?,
-                                                        // TODO: language tag
-                                                        language_tag: None
-                                                    }))?;
-                                                }
-                                                Literal::BooleanLiteral(_) => {
-                                                    Err(anyhow!(
-                                                "Boolean Literal not supported in TripleProducer yet."
-                                            ))?;
-                                                }
-                                            }
-                                        }
-                                        Object::BlankNode(blank_node) => {
-                                            let current_blank_node = match blank_node {
-                                                BlankNode::Anonymous(_) => {
-                                                    state.allocate_blank_node()
-                                                }
-                                                BlankNode::Labeled(labled) => {
-                                                    state.allocate_labeled_blank_node(labled)
-                                                }
-                                            };
-                                            state.produce_triple(
-                                                &mut triples,
-                                                RdfObject::BlankNode(current_blank_node),
-                                            )?;
-                                        }
-                                        Object::Collection(_) => {
-                                            // TODO
-                                            Err(anyhow!(
-                                                "Collection not supported in TripleProducer yet."
-                                            ))?;
-                                        }
-                                        Object::BlankNodePropertyList(_) => {
-                                            // TODO
-                                            Err(anyhow!(
-                                                "BlankNodePropertyList not supported in TripleProducer yet."
-                                            ))?;
-                                        }
-                                    }
-                                }
-                            }
+                            Self::produce_predicate_object_list(
+                                &mut state,
+                                &mut triples,
+                                predicate_object_list,
+                            )?;
                         }
                     }
                 }
@@ -123,6 +74,134 @@ impl TripleProducer {
         }
 
         Ok(triples)
+    }
+
+    fn produce_predicate_object_list<'a>(
+        state: &mut ProducerState<'a>,
+        mut triples: &mut Vec<RdfTriple<'a>>,
+        predicate_object_list: PredicateObjectList<'a>,
+    ) -> Result<(), Error> {
+        for (_, verb, object_list, _) in predicate_object_list.list {
+            state.set_current_predicate(state.convert_verb(verb)?);
+            for (_, _, object) in object_list.list {
+                let rdf_object = Self::produce_object(state, triples, object)?;
+                state.produce_triple(&mut triples, rdf_object)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn produce_object<'a>(
+        state: &mut ProducerState<'a>,
+        mut triples: &mut Vec<RdfTriple<'a>>,
+        object: Object<'a>,
+    ) -> Result<RdfObject<'a>, Error> {
+        Ok(match object {
+            Object::IRI(iri) => RdfObject::IRI(state.convert_iri(iri)?),
+            Object::Literal(literal) => {
+                match literal {
+                    Literal::RDFLiteral(rdf_literal) => {
+                        RdfObject::Literal(RdfLiteral {
+                            lexical_form: Cow::Owned(rdf_literal.string.to_string()),
+                            datatype_iri: rdf_literal
+                                .iri
+                                .map(|n| state.convert_iri(n))
+                                .transpose()?,
+                            // TODO: language tag
+                            language_tag: None,
+                        })
+                    }
+                    Literal::BooleanLiteral(_) => {
+                        bail!("Boolean Literal not supported in TripleProducer yet.")
+                    }
+                    Literal::NumericLiteral(_) => {
+                        bail!("Numeric Literal not supported in TripleProducer yet.")
+                    }
+                }
+            }
+            Object::BlankNode(blank_node) => {
+                let current_blank_node = match blank_node {
+                    BlankNode::Anonymous(_) => state.allocate_blank_node(),
+                    BlankNode::Labeled(labled) => state.allocate_labeled_blank_node(labled),
+                };
+                RdfObject::BlankNode(current_blank_node)
+            }
+            Object::Collection(collection) => {
+                match Self::produce_collection(state, triples, collection)? {
+                    Either::Left(iri) => { RdfObject::IRI(iri)}
+                    Either::Right(blank_node) => {RdfObject::BlankNode(blank_node)}
+                }
+            }
+            Object::BlankNodePropertyList(blank_node_property_list) => {
+                let mut sub_triples = vec![];
+
+                let blank_node = state.allocate_blank_node();
+
+                let stashed_subject = state.current_subject.clone();
+                let stashed_predicate = state.current_predicate.clone();
+
+                state.set_current_subject(RdfSubject::BlankNode(blank_node.clone()));
+
+                Self::produce_predicate_object_list(
+                    state,
+                    &mut sub_triples,
+                    blank_node_property_list.list,
+                )?;
+
+                state.current_subject = stashed_subject;
+                state.current_predicate = stashed_predicate;
+
+                triples.append(&mut sub_triples);
+
+                RdfObject::BlankNode(blank_node.clone())
+            }
+        })
+    }
+
+    /// See <https://www.w3.org/TR/turtle/#collection>
+    fn produce_collection<'a>(
+        state: &mut ProducerState<'a>,
+        mut triples: &mut Vec<RdfTriple<'a>>,
+        collection: Collection<'a>,
+    ) -> Result<Either<RdfIri<'a>, RdfBlankNode>, Error> {
+        let stashed_subject = state.current_subject.clone();
+        let stashed_predicate = state.current_predicate.clone();
+
+        let return_node = match collection.list.len() {
+            0 => Either::Left(iri_constants::RDF_NIL),
+            _ => {
+                let mut first_blank_node: Option<RdfBlankNode> = None;
+
+                let mut previous_blank_node = None;
+                for object in collection.list {
+                    let current_blank_node = state.allocate_blank_node();
+                    if matches!(first_blank_node, None) {
+                        first_blank_node = Some(current_blank_node.clone());
+                    }
+                    if let Some(_) = previous_blank_node {
+                        state.set_current_predicate(RdfPredicate::IRI(iri_constants::RDF_REST));
+                        state.produce_triple(triples, RdfObject::BlankNode(current_blank_node.clone()));
+                    }
+
+                    state.set_current_subject(RdfSubject::BlankNode(current_blank_node.clone()));
+                    state.set_current_predicate(RdfPredicate::IRI(iri_constants::RDF_FIRST));
+
+                    let rdf_object = Self::produce_object(state, triples, object)?;
+                    state.produce_triple(triples, rdf_object)?;
+
+                    previous_blank_node = Some(current_blank_node.clone());
+                }
+                state.set_current_predicate(RdfPredicate::IRI(iri_constants::RDF_REST));
+                state.produce_triple(triples, RdfObject::IRI(iri_constants::RDF_NIL));
+
+                Either::Right(first_blank_node.expect("Tried to produce collection without returning a blank node"))
+            }
+        };
+
+        state.current_subject = stashed_subject;
+        state.current_predicate = stashed_predicate;
+
+        Ok(return_node)
     }
 }
 
@@ -211,9 +290,7 @@ impl<'a> ProducerState<'a> {
 
     fn convert_verb(&self, verb: Verb<'a>) -> Result<RdfPredicate<'a>, Error> {
         Ok(match verb {
-            Verb::A => {
-                RdfPredicate::IRI(iri_constants::RDF_TYPE)
-            }
+            Verb::A => RdfPredicate::IRI(iri_constants::RDF_TYPE),
             Verb::IRI(iri) => RdfPredicate::IRI(self.convert_iri(iri)?),
         })
     }
@@ -285,10 +362,22 @@ impl RdfBlankNode {
 }
 
 mod iri_constants {
-    use std::borrow::Cow;
     use crate::triple_production::RdfIri;
+    use std::borrow::Cow;
 
     pub const RDF_TYPE: RdfIri = RdfIri {
-        iri: Cow::Borrowed("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+        iri: Cow::Borrowed("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+    };
+
+    pub const RDF_FIRST: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/1999/02/22-rdf-syntax-ns#first"),
+    };
+
+    pub const RDF_REST: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"),
+    };
+
+    pub const RDF_NIL: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"),
     };
 }
