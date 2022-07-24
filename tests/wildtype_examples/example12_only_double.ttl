@@ -1,0 +1,3 @@
+@prefix : <http://example.org/elements> .
+<http://en.wikipedia.org/wiki/Helium>
+    :specificGravity 1.663E-4 .

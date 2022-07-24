@@ -490,7 +490,10 @@ impl<'a> BlankNodePropertyList<'a> {
                 tuple((PredicateObjectList::parse, opt(Whitespace::parse))),
                 char(']'),
             ),
-            |(list, ws)| Self { list, trailing_whitespace: ws },
+            |(list, ws)| Self {
+                list,
+                trailing_whitespace: ws,
+            },
         )(input)
     }
 
@@ -534,10 +537,18 @@ impl<'a> ObjectList<'a> {
         map(
             many1(alt((
                 // First item
-                map(tuple((opt(Whitespace::parse), Object::parse)), |(ws, object)| (None, ws, object)),
+                map(
+                    tuple((opt(Whitespace::parse), Object::parse)),
+                    |(ws, object)| (None, ws, object),
+                ),
                 // Subsequent items delimited by whitespace and ','
                 map(
-                    tuple((opt(Whitespace::parse), char(','), opt(Whitespace::parse), Object::parse)),
+                    tuple((
+                        opt(Whitespace::parse),
+                        char(','),
+                        opt(Whitespace::parse),
+                        Object::parse,
+                    )),
                     |(whitespace_before, _, whitespace_after, object)| {
                         (whitespace_before, whitespace_after, object)
                     },
@@ -971,7 +982,7 @@ impl<'a> PrefixedName<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Literal<'a> {
     RDFLiteral(RDFLiteral<'a>),
-    // NumericLiteral(NumericLiteral<'a>),
+    NumericLiteral(NumericLiteral<'a>),
     BooleanLiteral(BooleanLiteral),
 }
 
@@ -983,6 +994,7 @@ impl<'a> Literal<'a> {
         alt((
             map(RDFLiteral::parse, Self::RDFLiteral),
             map(BooleanLiteral::parse, Self::BooleanLiteral),
+            map(NumericLiteral::parse, Self::NumericLiteral),
         ))(input)
     }
 
@@ -990,8 +1002,7 @@ impl<'a> Literal<'a> {
         match subject {
             Self::RDFLiteral(literal) => Box::new(RDFLiteral::gen(literal)),
             Self::BooleanLiteral(bool) => Box::new(BooleanLiteral::gen(bool)),
-            #[allow(unreachable_patterns)]
-            _ => todo!(),
+            Self::NumericLiteral(numeric) => Box::new(NumericLiteral::gen(numeric)),
         }
     }
 }
@@ -1072,6 +1083,83 @@ impl<'a> RDFLiteral<'a> {
             _ => unreachable!(),
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum NumericLiteral<'a> {
+    Integer(Integer<'a>),
+    // Decimal(Decimal<'a>),
+    // Double(Double<'a>),
+}
+
+impl<'a> NumericLiteral<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        alt((
+            // map(Double::parse, Self::SparqlBase),
+            // map(Decimal::parse, Self::Prefix),
+            map(Integer::parse, Self::Integer),
+        ))(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        match subject {
+            Self::Integer(number) => Box::new(Integer::gen(number)),
+            // Self::Decimal(number) => Box::new(Decimal::gen(number)),
+            // Self::Double(number) => Box::new(Double::gen(number)),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Integer<'a> {
+    pub sign: Option<Cow<'a, str>>,
+    pub number_literal: Cow<'a, str>,
+}
+
+impl<'a> Integer<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((
+                opt(satisfy(Self::is_number_sign)),
+                many1(satisfy(Self::is_number)),
+            )),
+            |(sign, number_literal)| Self {
+                sign: sign.map(|c| Cow::Owned(c.to_string())),
+                number_literal: Cow::Owned(number_literal.into_iter().collect()),
+            },
+        )(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        Box::new(cf_tuple((
+            gen_option_cow_str(&subject.sign),
+            cf_string(&subject.number_literal),
+        )))
+    }
+
+    pub fn is_number_sign(khar: char) -> bool {
+        matches!(khar, '+' | '-')
+    }
+
+    pub fn is_number(khar: char) -> bool {
+        matches!(khar, '0'..='9')
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Decimal<'a> {
+    pub string: Cow<'a, str>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Double<'a> {
+    pub string: Cow<'a, str>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -2009,8 +2097,8 @@ mod tests {
                         whitespace: Cow::Borrowed("\n                      ")
                     })
                 },
-        )),
-        BlankNodePropertyList::parse::<VerboseError<&str>>(
+            )),
+            BlankNodePropertyList::parse::<VerboseError<&str>>(
                 r#"[
                         ex:fullname "Dave Beckett";
                         ex:homePage <http://purl.org/net/dajobe/>
@@ -2194,6 +2282,30 @@ mod tests {
         assert_eq!(
             r#""SomeString"^^xsd:boolean"#,
             std::str::from_utf8(&mem[..written_bytes as usize]).unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_numeric_literal() {
+        assert_eq!(
+            Ok((
+                "",
+                Integer {
+                    sign: None,
+                    number_literal: Cow::Borrowed("12345")
+                }
+            )),
+            Integer::parse::<VerboseError<&str>>("12345")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                NumericLiteral::Integer(Integer {
+                    sign: None,
+                    number_literal: Cow::Borrowed("12345")
+                })
+            )),
+            NumericLiteral::parse::<VerboseError<&str>>("12345")
         );
     }
 
