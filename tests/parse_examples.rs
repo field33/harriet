@@ -158,7 +158,6 @@ fn example25() {
 }
 
 #[test]
-#[ignore]
 // Blank nodes + numbers
 fn example26() {
     parse_example_file("example26.ttl");
@@ -168,6 +167,23 @@ fn example26() {
 // Variant of reference example1 where "a" is replaced with "rdfs:type"
 fn example1_without_a() {
     parse_wildtype_file("example1_without_a.ttl");
+}
+
+#[test]
+fn example12_only_integer() {
+    parse_wildtype_file("example12_only_integer.ttl");
+}
+
+#[test]
+#[ignore]
+fn example12_only_decimal() {
+    parse_wildtype_file("example12_only_decimal.ttl");
+}
+
+#[test]
+#[ignore]
+fn example12_only_double() {
+    parse_wildtype_file("example12_only_double.ttl");
 }
 
 #[test]

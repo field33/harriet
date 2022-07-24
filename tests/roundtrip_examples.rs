@@ -175,7 +175,6 @@ fn example25() {
 }
 
 #[test]
-#[ignore]
 fn example26() {
     roundtrip_example_file("example26.ttl");
 }
@@ -184,6 +183,23 @@ fn example26() {
 // Variant of reference example1 where "a" is replaced with "rdfs:type"
 fn example1_without_a() {
     roundtrip_wildtype_file("example1_without_a.ttl");
+}
+
+#[test]
+fn example12_only_integer() {
+    roundtrip_wildtype_file("example12_only_integer.ttl");
+}
+
+#[test]
+#[ignore]
+fn example12_only_decimal() {
+    roundtrip_wildtype_file("example12_only_decimal.ttl");
+}
+
+#[test]
+#[ignore]
+fn example12_only_double() {
+    roundtrip_wildtype_file("example12_only_double.ttl");
 }
 
 #[test]
