@@ -93,7 +93,7 @@ impl TripleProducer {
 
     fn produce_object<'a>(
         state: &mut ProducerState<'a>,
-        mut triples: &mut Vec<RdfTriple<'a>>,
+        triples: &mut Vec<RdfTriple<'a>>,
         object: Object<'a>,
     ) -> Result<RdfObject<'a>, Error> {
         Ok(match object {
@@ -161,7 +161,7 @@ impl TripleProducer {
     /// See <https://www.w3.org/TR/turtle/#collection>
     fn produce_collection<'a>(
         state: &mut ProducerState<'a>,
-        mut triples: &mut Vec<RdfTriple<'a>>,
+        triples: &mut Vec<RdfTriple<'a>>,
         collection: Collection<'a>,
     ) -> Result<Either<RdfIri<'a>, RdfBlankNode>, Error> {
         let stashed_subject = state.current_subject.clone();
@@ -180,7 +180,7 @@ impl TripleProducer {
                     }
                     if let Some(_) = previous_blank_node {
                         state.set_current_predicate(RdfPredicate::IRI(iri_constants::RDF_REST));
-                        state.produce_triple(triples, RdfObject::BlankNode(current_blank_node.clone()));
+                        state.produce_triple(triples, RdfObject::BlankNode(current_blank_node.clone()))?;
                     }
 
                     state.set_current_subject(RdfSubject::BlankNode(current_blank_node.clone()));
@@ -192,7 +192,7 @@ impl TripleProducer {
                     previous_blank_node = Some(current_blank_node.clone());
                 }
                 state.set_current_predicate(RdfPredicate::IRI(iri_constants::RDF_REST));
-                state.produce_triple(triples, RdfObject::IRI(iri_constants::RDF_NIL));
+                state.produce_triple(triples, RdfObject::IRI(iri_constants::RDF_NIL))?;
 
                 Either::Right(first_blank_node.expect("Tried to produce collection without returning a blank node"))
             }
@@ -348,7 +348,7 @@ pub struct RdfLiteral<'a> {
     pub language_tag: Option<Cow<'a, str>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RdfBlankNode {
     internal_id: ProcessUniqueId,
 }
