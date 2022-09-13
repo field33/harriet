@@ -4,6 +4,7 @@ use snowflake::ProcessUniqueId;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use either::Either;
+use oxiri::Iri;
 
 /// A triple producer, produces is able to produce a stream of RDF Triples based on a parsed Turtle document.
 ///
@@ -14,7 +15,7 @@ pub struct TripleProducer;
 #[derive(Debug, Default)]
 struct ProducerState<'a> {
     /// Tracks the current base URI.
-    base_uri: Option<String>,
+    base_uri: Option<Iri<String>>,
     /// Tracks the current namespaces (= prefix to prefix-URI mapping).
     namespaces: HashMap<String, String>,
     /// Tracks the current set of blank node labels.
@@ -34,7 +35,7 @@ impl TripleProducer {
 
         for statement in document.statements.clone() {
             match statement {
-                Statement::Directive(directive) => state.apply_directive(directive),
+                Statement::Directive(directive) => state.apply_directive(directive)?,
                 Statement::Triples(stmt_triples) => {
                     // Reset the subject; Shouldn't be necessary, but maybe keeps a few bugs out.
                     state.current_subject = None;
@@ -107,8 +108,7 @@ impl TripleProducer {
                                 .iri
                                 .map(|n| state.convert_iri(n))
                                 .transpose()?,
-                            // TODO: language tag
-                            language_tag: None,
+                            language_tag: rdf_literal.language_tag,
                         })
                     }
                     Literal::BooleanLiteral(_) => {
@@ -206,8 +206,9 @@ impl TripleProducer {
 }
 
 impl<'a> ProducerState<'a> {
-    fn set_base_uri<U: Into<String>>(&mut self, base_uri: U) {
-        self.base_uri = Some(base_uri.into());
+    fn set_base_uri<U: Into<String>>(&mut self, base_uri: U) -> Result<(), Error> {
+        self.base_uri = Some(Iri::parse(base_uri.into())?);
+        Ok(())
     }
 
     fn set_namespace<P: Into<String>, U: Into<String>>(&mut self, prefix: P, uri: U) {
@@ -222,10 +223,10 @@ impl<'a> ProducerState<'a> {
         self.current_predicate = Some(predicate.into())
     }
 
-    fn apply_directive(&mut self, directive: Directive) {
+    fn apply_directive(&mut self, directive: Directive) -> Result<(), Error> {
         match directive {
-            Directive::Base(base_dir) => self.set_base_uri(base_dir.iri.iri),
-            Directive::SparqlBase(base_dir) => self.set_base_uri(base_dir.iri.iri),
+            Directive::Base(base_dir) => self.set_base_uri(base_dir.iri.iri)?,
+            Directive::SparqlBase(base_dir) => self.set_base_uri(base_dir.iri.iri)?,
             Directive::Prefix(prefix_dir) => self.set_namespace(
                 prefix_dir.prefix.unwrap_or(Cow::Borrowed("")),
                 prefix_dir.iri.iri,
@@ -235,6 +236,7 @@ impl<'a> ProducerState<'a> {
                 prefix_dir.iri.iri,
             ),
         }
+        Ok(())
     }
 
     fn allocate_labeled_blank_node(&mut self, blank_node: BlankNodeLabel) -> RdfBlankNode {
@@ -273,7 +275,7 @@ impl<'a> ProducerState<'a> {
     fn convert_iri(&self, iri: IRI<'a>) -> Result<RdfIri<'a>, Error> {
         Ok(match iri {
             IRI::IRIReference(iri_ref) => RdfIri {
-                iri: self.resolve_iri(iri_ref),
+                iri: self.resolve_iri(iri_ref)?,
             },
             IRI::PrefixedName(prefixed_name) => RdfIri {
                 iri: format!(
@@ -295,13 +297,12 @@ impl<'a> ProducerState<'a> {
         })
     }
 
-    // TODO: resolution of relative IRIs relative to the base
     // See https://www.ietf.org/rfc/rfc3986.txt - Section 5.2 - Requires parsing the base and the iri
-    fn resolve_iri(&self, iri_ref: IRIReference<'a>) -> Cow<'a, str> {
-        match &self.base_uri {
+    fn resolve_iri(&self, iri_ref: IRIReference<'a>) -> Result<Cow<'a, str>, Error> {
+        Ok(match &self.base_uri {
             None => iri_ref.iri,
-            Some(base) => format!("{base}{relative_iri}", relative_iri = iri_ref.iri).into(),
-        }
+            Some(base) => Cow::Owned(base.resolve(iri_ref.iri.as_ref())?.as_str().to_string()),
+        })
     }
 
     fn resolve_prefix(&self, prefix: Option<&str>) -> Result<&String, Error> {

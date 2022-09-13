@@ -1,6 +1,6 @@
 [package]
 name = "harriet"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2018"
 description = "Parser for the Turtle (RDF) format"
 license = "MIT OR Apache-2.0"
@@ -18,6 +18,7 @@ either = "1.6"
 nom = { version = "7", features = ["alloc"]}
 anyhow = "1"
 snowflake = "1"
+oxiri = "0.2.2"
 
 [dev-dependencies]
 pretty_assertions = "1.2"
