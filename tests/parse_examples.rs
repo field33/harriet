@@ -129,20 +129,17 @@ fn example21() {
 }
 
 #[test]
-#[ignore]
 // Multiline string in a single line via \n escape sequence
 fn example22() {
     parse_example_file("example22.ttl");
 }
 
 #[test]
-#[ignore]
 fn example23() {
     parse_example_file("example23.ttl");
 }
 
 #[test]
-#[ignore]
 // Blank nodes + numbers
 fn example24() {
     parse_example_file("example24.ttl");

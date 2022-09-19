@@ -147,20 +147,17 @@ fn example21() {
 }
 
 #[test]
-#[ignore]
 // Multiline string in a single line via \n escape sequence
 fn example22() {
     roundtrip_example_file("example22.ttl");
 }
 
 #[test]
-#[ignore]
 fn example23() {
     roundtrip_example_file("example23.ttl");
 }
 
 #[test]
-#[ignore]
 fn example24() {
     roundtrip_example_file("example24.ttl");
 }
