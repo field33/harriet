@@ -1,4 +1,4 @@
-use harriet::TurtleDocument;
+use harriet::{Directive, Statement, TurtleDocument};
 use nom::error::VerboseError;
 
 fn parse_example_file(file_name: &str) {
@@ -206,4 +206,21 @@ fn example24_simple1() {
 #[test]
 fn example24_simple2() {
     parse_wildtype_file("example24_simple2.ttl");
+}
+
+#[test]
+fn leading_whitespace_base() {
+    let file_name = "leading_whitespace_base.ttl";
+    let ontology =
+        std::fs::read_to_string(&format!("./tests/wildtype_examples/{}", file_name)).unwrap();
+    let document = TurtleDocument::parse::<VerboseError<&str>>(&ontology)
+        .unwrap()
+        .1;
+    let mut count = 0;
+    for statement in document.statements {
+        if let Statement::Directive(Directive::Base(_)) = statement {
+            count += 1;
+        }
+    }
+    assert_eq!(1, count);
 }
