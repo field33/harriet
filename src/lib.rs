@@ -1098,7 +1098,7 @@ impl<'a> RDFLiteral<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumericLiteral<'a> {
     Integer(Integer<'a>),
-    // Decimal(Decimal<'a>),
+    Decimal(Decimal<'a>),
     // Double(Double<'a>),
 }
 
@@ -1108,8 +1108,8 @@ impl<'a> NumericLiteral<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
-            // map(Double::parse, Self::SparqlBase),
-            // map(Decimal::parse, Self::Prefix),
+            // map(Double::parse, Self::Double),
+            map(Decimal::parse, Self::Decimal),
             map(Integer::parse, Self::Integer),
         ))(input)
     }
@@ -1117,7 +1117,7 @@ impl<'a> NumericLiteral<'a> {
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
             Self::Integer(number) => Box::new(Integer::gen(number)),
-            // Self::Decimal(number) => Box::new(Decimal::gen(number)),
+            Self::Decimal(number) => Box::new(Decimal::gen(number)),
             // Self::Double(number) => Box::new(Double::gen(number)),
         }
     }
@@ -1164,7 +1164,39 @@ impl<'a> Integer<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decimal<'a> {
-    pub string: Cow<'a, str>,
+    pub sign: Option<Cow<'a, str>>,
+    pub integer: Option<Cow<'a, str>>,
+    pub fractional: Cow<'a, str>,
+}
+
+impl<'a> Decimal<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((
+                opt(satisfy(Integer::is_number_sign)),
+                opt(many1(satisfy(Integer::is_number))),
+                tag("."),
+                many1(satisfy(Integer::is_number)),
+            )),
+            |(sign, integer, _point, fractional)| Self {
+                sign: sign.map(|c| Cow::Owned(c.to_string())),
+                integer: integer.map(|chars| Cow::Owned(chars.into_iter().collect())),
+                fractional: Cow::Owned(fractional.into_iter().collect()),
+            },
+        )(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        Box::new(cf_tuple((
+            gen_option_cow_str(&subject.sign),
+            gen_option_cow_str(&subject.integer),
+            cf_string("."),
+            cf_string(&subject.fractional),
+        )))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

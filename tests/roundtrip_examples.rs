@@ -189,7 +189,6 @@ fn example12_only_integer() {
 }
 
 #[test]
-#[ignore]
 fn example12_only_decimal() {
     roundtrip_wildtype_file("example12_only_decimal.ttl");
 }
