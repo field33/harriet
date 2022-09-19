@@ -72,7 +72,6 @@ fn example11() {
 }
 
 #[test]
-#[ignore]
 // Number literals
 fn example12() {
     triples_example_file("example12.ttl");

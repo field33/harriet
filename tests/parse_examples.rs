@@ -75,7 +75,6 @@ fn example11() {
 }
 
 #[test]
-#[ignore]
 // Number literals
 fn example12() {
     parse_example_file("example12.ttl");
@@ -178,7 +177,6 @@ fn example12_only_decimal() {
 }
 
 #[test]
-#[ignore]
 fn example12_only_double() {
     parse_wildtype_file("example12_only_double.ttl");
 }

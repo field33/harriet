@@ -139,6 +139,13 @@ impl TripleProducer {
                                 language_tag: None,
                             }
                         }
+                        NumericLiteral::Double(double_literal) => {
+                            RdfLiteral {
+                                lexical_form: double_literal.lexical_form().into(),
+                                datatype_iri: Some(iri_constants::XSD_DOUBLE),
+                                language_tag: None,
+                            }
+                        }
                     })
                 }
             },
@@ -425,5 +432,9 @@ mod iri_constants {
 
     pub const XSD_DECIMAL: RdfIri = RdfIri {
         iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#decimal"),
+    };
+
+    pub const XSD_DOUBLE: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#double"),
     };
 }
