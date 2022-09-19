@@ -753,7 +753,10 @@ impl<'a> SparqlBaseDirective<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(Self::parse_raw, |(leading, iri_ref)| Self { leading_whitespace: leading, iri: iri_ref })(input)
+        map(Self::parse_raw, |(leading, iri_ref)| Self {
+            leading_whitespace: leading,
+            iri: iri_ref,
+        })(input)
     }
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, IRIReference), E>
@@ -762,8 +765,11 @@ impl<'a> SparqlBaseDirective<'a> {
     {
         tuple((
             opt(Whitespace::parse),
-            tag("BASE"), multispace1, IRIReference::parse))(input)
-            .map(|(remainder, (leading, _, _, iri))| (remainder, (leading, iri)))
+            tag("BASE"),
+            multispace1,
+            IRIReference::parse,
+        ))(input)
+        .map(|(remainder, (leading, _, _, iri))| (remainder, (leading, iri)))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -854,7 +860,9 @@ impl<'a> SparqlPrefixDirective<'a> {
         })(input)
     }
 
-    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, Option<&'a str>, IRIReference), E>
+    fn parse_raw<E>(
+        input: &'a str,
+    ) -> IResult<&'a str, (Option<Whitespace>, Option<&'a str>, IRIReference), E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
@@ -1153,6 +1161,14 @@ impl<'a> Integer<'a> {
         )))
     }
 
+    pub fn lexical_form(&self) -> String {
+        format!(
+            "{sign}{integer}",
+            sign = self.sign.as_ref().unwrap_or(&Cow::Borrowed("")),
+            integer = self.number_literal
+        )
+    }
+
     pub fn is_number_sign(khar: char) -> bool {
         matches!(khar, '+' | '-')
     }
@@ -1171,8 +1187,8 @@ pub struct Decimal<'a> {
 
 impl<'a> Decimal<'a> {
     fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
-        where
-            E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
             tuple((
@@ -1196,6 +1212,15 @@ impl<'a> Decimal<'a> {
             cf_string("."),
             cf_string(&subject.fractional),
         )))
+    }
+
+    pub fn lexical_form(&self) -> String {
+        format!(
+            "{sign}{integer}.{fractional}",
+            sign = self.sign.as_ref().unwrap_or(&Cow::Borrowed("")),
+            integer = self.integer.as_ref().unwrap_or(&Cow::Borrowed("")),
+            fractional = self.fractional,
+        )
     }
 }
 
