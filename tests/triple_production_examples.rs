@@ -72,14 +72,12 @@ fn example11() {
 }
 
 #[test]
-#[ignore]
 // Number literals
 fn example12() {
     triples_example_file("example12.ttl");
 }
 
 #[test]
-#[ignore]
 fn example13() {
     triples_example_file("example13.ttl");
 }
@@ -190,4 +188,9 @@ fn example24_simple1() {
 #[test]
 fn example24_simple2() {
     triples_wildtype_file("example24_simple2.ttl");
+}
+
+#[test]
+fn example12_only_decimal() {
+    triples_wildtype_file("example12_only_decimal.ttl");
 }

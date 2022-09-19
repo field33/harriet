@@ -1,8 +1,5 @@
-use crate::{
-    BlankNode, BlankNodeLabel, Collection, Directive, IRIReference, Literal, Object,
-    PredicateObjectList, Statement, Subject, Triples, TurtleDocument, Verb, IRI,
-};
-use anyhow::{anyhow, bail, Context, Error};
+use crate::{BlankNode, BlankNodeLabel, Collection, Directive, IRIReference, Literal, Object, PredicateObjectList, Statement, Subject, Triples, TurtleDocument, Verb, IRI, NumericLiteral};
+use anyhow::{anyhow, Context, Error};
 use either::Either;
 use oxiri::Iri;
 use snowflake::ProcessUniqueId;
@@ -118,11 +115,38 @@ impl TripleProducer {
                         .or(Some(iri_constants::XSD_STRING)),
                     language_tag: rdf_literal.language_tag,
                 }),
-                Literal::BooleanLiteral(_) => {
-                    bail!("Boolean Literal not supported in TripleProducer yet.")
-                }
-                Literal::NumericLiteral(_) => {
-                    bail!("Numeric Literal not supported in TripleProducer yet.")
+                Literal::BooleanLiteral(boolean_literal) => RdfObject::Literal(RdfLiteral {
+                    lexical_form: Cow::Borrowed(match boolean_literal.bool {
+                        true => "true",
+                        false => "false",
+                    }),
+                    datatype_iri: Some(iri_constants::XSD_BOOLEAN),
+                    language_tag: None,
+                }),
+                Literal::NumericLiteral(numeric_literal) => {
+                    RdfObject::Literal(match numeric_literal {
+                        NumericLiteral::Integer(integer_literal) => {
+                            RdfLiteral {
+                                lexical_form: integer_literal.lexical_form().into(),
+                                datatype_iri: Some(iri_constants::XSD_INTEGER),
+                                language_tag: None,
+                            }
+                        }
+                        NumericLiteral::Decimal(decimal_literal) => {
+                            RdfLiteral {
+                                lexical_form: decimal_literal.lexical_form().into(),
+                                datatype_iri: Some(iri_constants::XSD_DECIMAL),
+                                language_tag: None,
+                            }
+                        }
+                        NumericLiteral::Double(double_literal) => {
+                            RdfLiteral {
+                                lexical_form: double_literal.lexical_form().into(),
+                                datatype_iri: Some(iri_constants::XSD_DOUBLE),
+                                language_tag: None,
+                            }
+                        }
+                    })
                 }
             },
             Object::BlankNode(blank_node) => {
@@ -396,5 +420,21 @@ mod iri_constants {
 
     pub const XSD_STRING: RdfIri = RdfIri {
         iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#string"),
+    };
+
+    pub const XSD_BOOLEAN: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#boolean"),
+    };
+
+    pub const XSD_INTEGER: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#integer"),
+    };
+
+    pub const XSD_DECIMAL: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#decimal"),
+    };
+
+    pub const XSD_DOUBLE: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#double"),
     };
 }

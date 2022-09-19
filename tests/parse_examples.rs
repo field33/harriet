@@ -75,7 +75,6 @@ fn example11() {
 }
 
 #[test]
-#[ignore]
 // Number literals
 fn example12() {
     parse_example_file("example12.ttl");
@@ -130,20 +129,17 @@ fn example21() {
 }
 
 #[test]
-#[ignore]
 // Multiline string in a single line via \n escape sequence
 fn example22() {
     parse_example_file("example22.ttl");
 }
 
 #[test]
-#[ignore]
 fn example23() {
     parse_example_file("example23.ttl");
 }
 
 #[test]
-#[ignore]
 // Blank nodes + numbers
 fn example24() {
     parse_example_file("example24.ttl");
@@ -173,13 +169,11 @@ fn example12_only_integer() {
 }
 
 #[test]
-#[ignore]
 fn example12_only_decimal() {
     parse_wildtype_file("example12_only_decimal.ttl");
 }
 
 #[test]
-#[ignore]
 fn example12_only_double() {
     parse_wildtype_file("example12_only_double.ttl");
 }

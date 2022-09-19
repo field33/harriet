@@ -753,7 +753,10 @@ impl<'a> SparqlBaseDirective<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(Self::parse_raw, |(leading, iri_ref)| Self { leading_whitespace: leading, iri: iri_ref })(input)
+        map(Self::parse_raw, |(leading, iri_ref)| Self {
+            leading_whitespace: leading,
+            iri: iri_ref,
+        })(input)
     }
 
     fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, IRIReference), E>
@@ -762,8 +765,11 @@ impl<'a> SparqlBaseDirective<'a> {
     {
         tuple((
             opt(Whitespace::parse),
-            tag("BASE"), multispace1, IRIReference::parse))(input)
-            .map(|(remainder, (leading, _, _, iri))| (remainder, (leading, iri)))
+            tag("BASE"),
+            multispace1,
+            IRIReference::parse,
+        ))(input)
+        .map(|(remainder, (leading, _, _, iri))| (remainder, (leading, iri)))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -854,7 +860,9 @@ impl<'a> SparqlPrefixDirective<'a> {
         })(input)
     }
 
-    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, Option<&'a str>, IRIReference), E>
+    fn parse_raw<E>(
+        input: &'a str,
+    ) -> IResult<&'a str, (Option<Whitespace>, Option<&'a str>, IRIReference), E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
@@ -1098,8 +1106,8 @@ impl<'a> RDFLiteral<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumericLiteral<'a> {
     Integer(Integer<'a>),
-    // Decimal(Decimal<'a>),
-    // Double(Double<'a>),
+    Decimal(Decimal<'a>),
+    Double(Double<'a>),
 }
 
 impl<'a> NumericLiteral<'a> {
@@ -1108,8 +1116,8 @@ impl<'a> NumericLiteral<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         alt((
-            // map(Double::parse, Self::SparqlBase),
-            // map(Decimal::parse, Self::Prefix),
+            map(Double::parse, Self::Double),
+            map(Decimal::parse, Self::Decimal),
             map(Integer::parse, Self::Integer),
         ))(input)
     }
@@ -1117,8 +1125,8 @@ impl<'a> NumericLiteral<'a> {
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
         match subject {
             Self::Integer(number) => Box::new(Integer::gen(number)),
-            // Self::Decimal(number) => Box::new(Decimal::gen(number)),
-            // Self::Double(number) => Box::new(Double::gen(number)),
+            Self::Decimal(number) => Box::new(Decimal::gen(number)),
+            Self::Double(number) => Box::new(Double::gen(number)),
         }
     }
 }
@@ -1153,6 +1161,14 @@ impl<'a> Integer<'a> {
         )))
     }
 
+    pub fn lexical_form(&self) -> String {
+        format!(
+            "{sign}{integer}",
+            sign = self.sign.as_ref().unwrap_or(&Cow::Borrowed("")),
+            integer = self.number_literal
+        )
+    }
+
     pub fn is_number_sign(khar: char) -> bool {
         matches!(khar, '+' | '-')
     }
@@ -1164,12 +1180,170 @@ impl<'a> Integer<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decimal<'a> {
-    pub string: Cow<'a, str>,
+    pub sign: Option<Cow<'a, str>>,
+    pub integer: Option<Cow<'a, str>>,
+    pub fractional: Cow<'a, str>,
+}
+
+impl<'a> Decimal<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((
+                opt(satisfy(Integer::is_number_sign)),
+                opt(many1(satisfy(Integer::is_number))),
+                tag("."),
+                many1(satisfy(Integer::is_number)),
+            )),
+            |(sign, integer, _point, fractional)| Self {
+                sign: sign.map(|c| Cow::Owned(c.to_string())),
+                integer: integer.map(|chars| Cow::Owned(chars.into_iter().collect())),
+                fractional: Cow::Owned(fractional.into_iter().collect()),
+            },
+        )(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+        Box::new(cf_tuple((
+            gen_option_cow_str(&subject.sign),
+            gen_option_cow_str(&subject.integer),
+            cf_string("."),
+            cf_string(&subject.fractional),
+        )))
+    }
+
+    pub fn lexical_form(&self) -> String {
+        format!(
+            "{sign}{integer}.{fractional}",
+            sign = self.sign.as_ref().unwrap_or(&Cow::Borrowed("")),
+            integer = self.integer.as_ref().unwrap_or(&Cow::Borrowed("")),
+            fractional = self.fractional,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Double<'a> {
-    pub string: Cow<'a, str>,
+    pub sign: Option<Cow<'a, str>>,
+    pub integer: Option<Cow<'a, str>>,
+    pub fractional_dot: Option<Cow<'a, str>>,
+    pub fractional: Option<Cow<'a, str>>,
+    pub exponent_char: Cow<'a, str>,
+    pub exponent_sign: Option<Cow<'a, str>>,
+    pub exponent_integer: Cow<'a, str>,
+}
+
+impl<'a> Double<'a> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        alt((
+            map(
+                tuple((
+                    opt(satisfy(Integer::is_number_sign)),
+                    many1(satisfy(Integer::is_number)),
+                    tag("."),
+                    opt(many1(satisfy(Integer::is_number))),
+                    Self::parse_exponent,
+                )),
+                |(sign, integer, fractional_dot, fractional, (exponent_char, exponent_sign, exponent_integer))| Self {
+                    sign: sign.map(|c| Cow::Owned(c.to_string())),
+                    integer: Some(Cow::Owned(integer.into_iter().collect())),
+                    fractional_dot: Some(Cow::Borrowed(fractional_dot)),
+                    fractional: fractional.map(|chars| Cow::Owned(chars.into_iter().collect())),
+                    exponent_char,
+                    exponent_sign,
+                    exponent_integer,
+                },
+            ),
+            map(
+                tuple((
+                    opt(satisfy(Integer::is_number_sign)),
+                    tag("."),
+                    many1(satisfy(Integer::is_number)),
+                    Self::parse_exponent,
+                )),
+                |(sign, fractional_dot, fractional, (exponent_char, exponent_sign, exponent_integer))| Self {
+                    sign: sign.map(|c| Cow::Owned(c.to_string())),
+                    integer: None,
+                    fractional_dot: Some(Cow::Borrowed(fractional_dot)),
+                    fractional: Some(Cow::Owned(fractional.into_iter().collect())),
+                    exponent_char,
+                    exponent_sign,
+                    exponent_integer,
+                },
+            ),
+            map(
+                tuple((
+                    opt(satisfy(Integer::is_number_sign)),
+                    opt(many1(satisfy(Integer::is_number))),
+                    Self::parse_exponent,
+                )),
+                |(sign, integer, (exponent_char, exponent_sign, exponent_integer))| Self {
+                    sign: sign.map(|c| Cow::Owned(c.to_string())),
+                    integer: integer.map(|chars| Cow::Owned(chars.into_iter().collect())),
+                    fractional_dot: None,
+                    fractional: None,
+                    exponent_char,
+                    exponent_sign,
+                    exponent_integer,
+                },
+            )
+        ))(input)
+    }
+
+    fn parse_exponent<E>(
+        input: &'a str,
+    ) -> IResult<&'a str, (Cow<'a, str>, Option<Cow<'a, str>>, Cow<'a, str>), E>
+    where
+        E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    {
+        map(
+            tuple((
+                alt((
+                    map(tag("e"), |khar| Cow::Borrowed(khar)),
+                    map(tag("E"), |khar| Cow::Borrowed(khar)),
+                )),
+                opt(satisfy(Integer::is_number_sign)),
+                many1(satisfy(Integer::is_number)),
+            )),
+            |(exponent_char, sign, integer)| {
+                (
+                    exponent_char,
+                    sign.map(|c| Cow::Owned(c.to_string())),
+                    Cow::Owned(integer.into_iter().collect()),
+                )
+            },
+        )(input)
+    }
+
+    fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
+            Box::new(cf_tuple((
+                gen_option_cow_str(&subject.sign),
+                gen_option_cow_str(&subject.integer),
+                gen_option_cow_str(&subject.fractional_dot),
+                gen_option_cow_str(&subject.fractional),
+                cf_string(&subject.exponent_char),
+                gen_option_cow_str(&subject.exponent_sign),
+                cf_string(&subject.exponent_integer),
+            )))
+    }
+
+        pub fn lexical_form(&self) -> String {
+            format!(
+                "{sign}{integer}{fractional_dot}{fractional}{exponent_char}{exponent_sign}{exponent_integer}",
+                sign = self.sign.as_ref().unwrap_or(&Cow::Borrowed("")),
+                integer = self.integer.as_ref().unwrap_or(&Cow::Borrowed("")),
+                fractional_dot = self.fractional_dot.as_ref().unwrap_or(&Cow::Borrowed("")),
+                fractional = self.fractional.as_ref().unwrap_or(&Cow::Borrowed("")),
+                exponent_char = self.exponent_char,
+                exponent_sign = self.exponent_sign.as_ref().unwrap_or(&Cow::Borrowed("")),
+                exponent_integer = self.exponent_integer,
+            )
+        }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
