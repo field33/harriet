@@ -118,9 +118,14 @@ impl TripleProducer {
                         .or(Some(iri_constants::XSD_STRING)),
                     language_tag: rdf_literal.language_tag,
                 }),
-                Literal::BooleanLiteral(_) => {
-                    bail!("Boolean Literal not supported in TripleProducer yet.")
-                }
+                Literal::BooleanLiteral(boolean_literal) => RdfObject::Literal(RdfLiteral {
+                    lexical_form: Cow::Borrowed(match boolean_literal.bool {
+                        true => "true",
+                        false => "false",
+                    }),
+                    datatype_iri: Some(iri_constants::XSD_BOOLEAN),
+                    language_tag: None,
+                }),
                 Literal::NumericLiteral(_) => {
                     bail!("Numeric Literal not supported in TripleProducer yet.")
                 }
@@ -396,5 +401,9 @@ mod iri_constants {
 
     pub const XSD_STRING: RdfIri = RdfIri {
         iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#string"),
+    };
+
+    pub const XSD_BOOLEAN: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#boolean"),
     };
 }
