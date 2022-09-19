@@ -1,6 +1,6 @@
 [package]
 name = "harriet"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2018"
 description = "Parser for the Turtle (RDF) format"
 license = "MIT OR Apache-2.0"
