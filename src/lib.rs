@@ -732,6 +732,7 @@ impl<'a> BaseDirective<'a> {
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((
+            Whitespace::gen_option(&subject.leading_whitespace),
             cf_string("@base"),
             cf_string(" "),
             IRIReference::gen(&subject.iri),
@@ -743,7 +744,7 @@ impl<'a> BaseDirective<'a> {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SparqlBaseDirective<'a> {
-    // TODO: leading
+    pub leading_whitespace: Option<Whitespace<'a>>,
     pub iri: IRIReference<'a>,
 }
 
@@ -752,19 +753,22 @@ impl<'a> SparqlBaseDirective<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(Self::parse_raw, |iri_ref| Self { iri: iri_ref })(input)
+        map(Self::parse_raw, |(leading, iri_ref)| Self { leading_whitespace: leading, iri: iri_ref })(input)
     }
 
-    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, IRIReference, E>
+    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, IRIReference), E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        tuple((tag("BASE"), multispace1, IRIReference::parse))(input)
-            .map(|(remainder, (_, _, iri))| (remainder, iri))
+        tuple((
+            opt(Whitespace::parse),
+            tag("BASE"), multispace1, IRIReference::parse))(input)
+            .map(|(remainder, (leading, _, _, iri))| (remainder, (leading, iri)))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((
+            Whitespace::gen_option(&subject.leading_whitespace),
             cf_string("BASE"),
             cf_string(" "),
             IRIReference::gen(&subject.iri),
@@ -833,7 +837,7 @@ impl<'a> PrefixDirective<'a> {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SparqlPrefixDirective<'a> {
-    // TODO: leading
+    pub leading_whitespace: Option<Whitespace<'a>>,
     pub prefix: Option<Cow<'a, str>>,
     pub iri: IRIReference<'a>,
 }
@@ -843,17 +847,19 @@ impl<'a> SparqlPrefixDirective<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map(Self::parse_raw, |(prefix, iri_ref)| Self {
+        map(Self::parse_raw, |(leading, prefix, iri_ref)| Self {
+            leading_whitespace: leading,
             prefix: prefix.map(|n| Cow::Borrowed(n)),
             iri: iri_ref,
         })(input)
     }
 
-    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<&'a str>, IRIReference), E>
+    fn parse_raw<E>(input: &'a str) -> IResult<&'a str, (Option<Whitespace>, Option<&'a str>, IRIReference), E>
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         tuple((
+            opt(Whitespace::parse),
             tag("PREFIX"),
             multispace1,
             opt(is_not(":")),
@@ -861,11 +867,12 @@ impl<'a> SparqlPrefixDirective<'a> {
             multispace1,
             IRIReference::parse,
         ))(input)
-        .map(|(remainder, (_, _, prefix, _, _, iri))| (remainder, (prefix, iri)))
+        .map(|(remainder, (leading, _, _, prefix, _, _, iri))| (remainder, (leading, prefix, iri)))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((
+            Whitespace::gen_option(&subject.leading_whitespace),
             cf_string("PREFIX"),
             cf_string(" "),
             gen_option_cow_str(&subject.prefix),

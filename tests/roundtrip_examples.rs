@@ -77,8 +77,6 @@ fn example8() {
 }
 
 #[test]
-#[ignore]
-// Doesn't handle special case of verb `a` as a replacement for `rdfs:type`
 fn example9() {
     roundtrip_example_file("example9.ttl");
 }
