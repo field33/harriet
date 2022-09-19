@@ -103,7 +103,7 @@ impl TripleProducer {
                 match literal {
                     Literal::RDFLiteral(rdf_literal) => {
                         RdfObject::Literal(RdfLiteral {
-                            lexical_form: Cow::Owned(rdf_literal.string.to_string()),
+                            lexical_form: Cow::Owned(rdf_literal.string.lexical_form().map_err(|e| anyhow!(e.to_owned())).unwrap()),
                             datatype_iri: rdf_literal
                                 .iri
                                 .map(|n| state.convert_iri(n))
