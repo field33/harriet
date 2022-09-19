@@ -1,10 +1,13 @@
-use crate::{BlankNode, BlankNodeLabel, Directive, IRIReference, Literal, Object, PredicateObjectList, Statement, Subject, Triples, TurtleDocument, Verb, IRI, Collection};
+use crate::{
+    BlankNode, BlankNodeLabel, Collection, Directive, IRIReference, Literal, Object,
+    PredicateObjectList, Statement, Subject, Triples, TurtleDocument, Verb, IRI,
+};
 use anyhow::{anyhow, bail, Context, Error};
+use either::Either;
+use oxiri::Iri;
 use snowflake::ProcessUniqueId;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use either::Either;
-use oxiri::Iri;
 
 /// A triple producer, produces is able to produce a stream of RDF Triples based on a parsed Turtle document.
 ///
@@ -99,26 +102,29 @@ impl TripleProducer {
     ) -> Result<RdfObject<'a>, Error> {
         Ok(match object {
             Object::IRI(iri) => RdfObject::IRI(state.convert_iri(iri)?),
-            Object::Literal(literal) => {
-                match literal {
-                    Literal::RDFLiteral(rdf_literal) => {
-                        RdfObject::Literal(RdfLiteral {
-                            lexical_form: Cow::Owned(rdf_literal.string.lexical_form().map_err(|e| anyhow!(e.to_owned())).unwrap()),
-                            datatype_iri: rdf_literal
-                                .iri
-                                .map(|n| state.convert_iri(n))
-                                .transpose()?,
-                            language_tag: rdf_literal.language_tag,
-                        })
-                    }
-                    Literal::BooleanLiteral(_) => {
-                        bail!("Boolean Literal not supported in TripleProducer yet.")
-                    }
-                    Literal::NumericLiteral(_) => {
-                        bail!("Numeric Literal not supported in TripleProducer yet.")
-                    }
+            Object::Literal(literal) => match literal {
+                Literal::RDFLiteral(rdf_literal) => RdfObject::Literal(RdfLiteral {
+                    lexical_form: Cow::Owned(
+                        rdf_literal
+                            .string
+                            .lexical_form()
+                            .map_err(|e| anyhow!(e.to_owned()))
+                            .unwrap(),
+                    ),
+                    datatype_iri: rdf_literal
+                        .iri
+                        .map(|n| state.convert_iri(n))
+                        .transpose()?
+                        .or(Some(iri_constants::XSD_STRING)),
+                    language_tag: rdf_literal.language_tag,
+                }),
+                Literal::BooleanLiteral(_) => {
+                    bail!("Boolean Literal not supported in TripleProducer yet.")
                 }
-            }
+                Literal::NumericLiteral(_) => {
+                    bail!("Numeric Literal not supported in TripleProducer yet.")
+                }
+            },
             Object::BlankNode(blank_node) => {
                 let current_blank_node = match blank_node {
                     BlankNode::Anonymous(_) => state.allocate_blank_node(),
@@ -128,8 +134,8 @@ impl TripleProducer {
             }
             Object::Collection(collection) => {
                 match Self::produce_collection(state, triples, collection)? {
-                    Either::Left(iri) => { RdfObject::IRI(iri)}
-                    Either::Right(blank_node) => {RdfObject::BlankNode(blank_node)}
+                    Either::Left(iri) => RdfObject::IRI(iri),
+                    Either::Right(blank_node) => RdfObject::BlankNode(blank_node),
                 }
             }
             Object::BlankNodePropertyList(blank_node_property_list) => {
@@ -180,7 +186,10 @@ impl TripleProducer {
                     }
                     if let Some(_) = previous_blank_node {
                         state.set_current_predicate(RdfPredicate::IRI(iri_constants::RDF_REST));
-                        state.produce_triple(triples, RdfObject::BlankNode(current_blank_node.clone()))?;
+                        state.produce_triple(
+                            triples,
+                            RdfObject::BlankNode(current_blank_node.clone()),
+                        )?;
                     }
 
                     state.set_current_subject(RdfSubject::BlankNode(current_blank_node.clone()));
@@ -194,7 +203,10 @@ impl TripleProducer {
                 state.set_current_predicate(RdfPredicate::IRI(iri_constants::RDF_REST));
                 state.produce_triple(triples, RdfObject::IRI(iri_constants::RDF_NIL))?;
 
-                Either::Right(first_blank_node.expect("Tried to produce collection without returning a blank node"))
+                Either::Right(
+                    first_blank_node
+                        .expect("Tried to produce collection without returning a blank node"),
+                )
             }
         };
 
@@ -380,5 +392,9 @@ mod iri_constants {
 
     pub const RDF_NIL: RdfIri = RdfIri {
         iri: Cow::Borrowed("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"),
+    };
+
+    pub const XSD_STRING: RdfIri = RdfIri {
+        iri: Cow::Borrowed("http://www.w3.org/2001/XMLSchema#string"),
     };
 }
