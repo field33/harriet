@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-
 pub mod triple_production;
 
 use crate::ParseError::NotFullyParsed;
@@ -10,16 +9,18 @@ use cookie_factory::multi::separated_list as cf_separated_list;
 use cookie_factory::sequence::tuple as cf_tuple;
 use cookie_factory::SerializeFn;
 use nom::branch::alt;
-use nom::bytes::complete::{escaped_transform, is_not, tag, take_till, take_until, take_while1};
+use nom::bytes::complete::{is_not, tag, take_till, take_while1};
 use nom::character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, satisfy};
-use nom::combinator::{map, map_parser, opt, value};
-use nom::error::{FromExternalError, ParseError as NomParseError, VerboseError};
+use nom::combinator::{map, map_parser, opt};
+use nom::error::{ErrorKind, FromExternalError, ParseError as NomParseError, VerboseError};
 use nom::multi::{many0, many1, separated_list1};
-use nom::sequence::{delimited, preceded, terminated, tuple};
-use nom::IResult;
+use nom::sequence::{delimited, tuple};
+use nom::Err;
+use nom::{IResult, Needed};
 use std::borrow::Cow;
 use std::borrow::Cow::Borrowed;
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::str::Chars;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurtleDocument<'a> {
@@ -1188,6 +1189,89 @@ impl BooleanLiteral {
     }
 }
 
+fn string_literal_inner<'a, E>(
+    str: &'a str,
+    ql: usize,
+    starts_with: fn(&'a str) -> bool,
+    find: fn(&'a str) -> Option<usize>,
+) -> IResult<&'a str, &'a str, E>
+where
+    E: NomParseError<&'a str>,
+{
+    if !starts_with(str) {
+        return Err(nom::Err::Error(NomParseError::from_error_kind(
+            str,
+            ErrorKind::Tag,
+        )));
+    }
+    let hay = &str[ql..];
+    if starts_with(hay) {
+        return Ok((&hay[ql..], ""));
+    }
+    let mut offset = 0;
+    loop {
+        let left = &hay[offset..];
+        if let Some(i) = find(left) {
+            offset += i;
+            if !escaped(hay.as_bytes(), offset) {
+                break;
+            }
+            offset += 1;
+        } else {
+            return Err(Err::Incomplete(Needed::Unknown));
+        }
+    }
+    Ok((&hay[offset + ql..], &hay[..offset]))
+}
+
+/// Escapes parts of the inner string literal during parsing
+fn escaped(hay: &[u8], offset: usize) -> bool {
+    let mut p = offset;
+    while p != 0 && hay[p - 1] == b'\\' {
+        p -= 1;
+    }
+    (offset - p) % 2 == 1
+}
+
+pub(crate) fn unescape(s: &str) -> Result<String, &'static str> {
+    let mut result = String::new();
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            let r = match chars.next() {
+                Some('u') => hex_to_char(&mut chars, 4),
+                Some('U') => hex_to_char(&mut chars, 8),
+                Some('t') => Some('\t'),
+                Some('b') => Some('\x08'),
+                Some('n') => Some('\n'),
+                Some('r') => Some('\r'),
+                Some('f') => Some('\x0c'),
+                Some('\'') => Some('\''),
+                Some('"') => Some('"'),
+                Some('\\') => Some('\\'),
+                _ => return Err("Invalid escape sequence"),
+            };
+            match r {
+                Some(v) => result.push(v),
+                None => return Err("Unclosed escape sequence"),
+            }
+        } else {
+            result.push(ch)
+        }
+    }
+    Ok(result)
+}
+
+fn hex_to_char(chars: &mut Chars, n: u8) -> Option<char> {
+    chars
+        .by_ref()
+        .take(n as usize)
+        .fold(Some((0, 0)), |acc, c| {
+            acc.and_then(|(acc, n)| c.to_digit(16).map(|c| ((acc << 4) + c, n + 1)))
+        })
+        .and_then(|(ch, count)| if count == n { char::from_u32(ch) } else { None })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurtleString<'a> {
     StringLiteralQuote(StringLiteralQuote<'a>),
@@ -1227,6 +1311,15 @@ impl<'a> TurtleString<'a> {
             }
         }
     }
+
+    pub fn lexical_form(&self) -> Result<String, &str> {
+        match self {
+            Self::StringLiteralQuote(inner) => inner.lexical_form(),
+            Self::StringLiteralSingleQuote(inner) => inner.lexical_form(),
+            Self::StringLiteralLongQuote(inner) => inner.lexical_form(),
+            Self::StringLiteralLongSingleQuote(inner) => inner.lexical_form(),
+        }
+    }
 }
 
 impl<'a> ToString for TurtleString<'a> {
@@ -1251,35 +1344,20 @@ impl<'a> StringLiteralQuote<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_str, |string| Self {
-            string: Cow::Owned(string),
+            string: Cow::Borrowed(string),
         })(input)
     }
 
-    fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, String, E> {
-        preceded(
-            char('\"'),
-            terminated(
-                // Inner string
-                escaped_transform(
-                    satisfy(|c| {
-                        c.is_alphanumeric()
-                            || c.is_whitespace()
-                            || (c.is_ascii_punctuation() && c != '"' && c != '\\')
-                    }),
-                    '\\',
-                    alt((
-                        value("\\", tag("\\")),
-                        value("\"", tag("\"")),
-                        value("\n", tag("\n")),
-                    )),
-                ),
-                char('\"'),
-            ),
-        )(i)
+    fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+        string_literal_inner(i, 1, |s| s.starts_with('"'), |s| s.find('"'))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((cf_string("\""), cf_string(&subject.string), cf_string("\"")))
+    }
+
+    pub fn lexical_form(&self) -> Result<String, &str> {
+        unescape(&self.string.as_ref())
     }
 }
 
@@ -1294,36 +1372,21 @@ impl<'a> StringLiteralSingleQuote<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(Self::parse_str, |string| Self {
-            string: Cow::Owned(string),
+            string: Cow::Borrowed(string),
         })(input)
     }
 
     /// Inner logic should be identical to [StringLiteralQuote::parse_str].
-    fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, String, E> {
-        preceded(
-            char('\''),
-            terminated(
-                // Inner string
-                escaped_transform(
-                    satisfy(|c| {
-                        c.is_alphanumeric()
-                            || c.is_whitespace()
-                            || (c.is_ascii_punctuation() && c != '\'' && c != '\\')
-                    }),
-                    '\\',
-                    alt((
-                        value("\\", tag("\\")),
-                        value("\'", tag("\'")),
-                        value("\n", tag("\n")),
-                    )),
-                ),
-                char('\''),
-            ),
-        )(i)
+    fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+        string_literal_inner(i, 1, |s| s.starts_with('\''), |s| s.find('\''))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((cf_string("\'"), cf_string(&subject.string), cf_string("\'")))
+    }
+
+    pub fn lexical_form(&self) -> Result<String, &str> {
+        unescape(&self.string.as_ref())
     }
 }
 
@@ -1343,14 +1406,7 @@ impl<'a> StringLiteralLongQuote<'a> {
     }
 
     fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
-        preceded(
-            tag("\"\"\""),
-            terminated(
-                // Inner string
-                take_until("\"\"\""),
-                tag("\"\"\""),
-            ),
-        )(i)
+        string_literal_inner(i, 3, |s| s.starts_with("\"\"\""), |s| s.find("\"\"\""))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -1359,6 +1415,10 @@ impl<'a> StringLiteralLongQuote<'a> {
             cf_string(&subject.string),
             cf_string("\"\"\""),
         ))
+    }
+
+    pub fn lexical_form(&self) -> Result<String, &str> {
+        unescape(&self.string.as_ref())
     }
 }
 
@@ -1378,14 +1438,7 @@ impl<'a> StringLiteralLongSingleQuote<'a> {
     }
 
     fn parse_str<E: NomParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
-        preceded(
-            tag("'''"),
-            terminated(
-                // Inner string
-                take_until("'''"),
-                tag("'''"),
-            ),
-        )(i)
+        string_literal_inner(i, 3, |s| s.starts_with("'''"), |s| s.find("'''"))
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -1394,6 +1447,10 @@ impl<'a> StringLiteralLongSingleQuote<'a> {
             cf_string(&subject.string),
             cf_string("'''"),
         ))
+    }
+
+    pub fn lexical_form(&self) -> Result<String, &str> {
+        unescape(&self.string.as_ref())
     }
 }
 
@@ -1410,7 +1467,7 @@ fn gen_option_cow_str<'a, W: Write + 'a>(
 mod tests {
     use super::*;
     use nom::error::VerboseError;
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn parse_whitespace() {
@@ -1963,10 +2020,18 @@ mod tests {
             Ok((
                 "",
                 StringLiteralQuote {
-                    string: Cow::Borrowed(r#"Dwayne "The Rock" Johnson"#),
+                    string: Cow::Borrowed(r#"Dwayne \"The Rock\" Johnson"#),
                 }
             )),
             StringLiteralQuote::parse::<VerboseError<&str>>(r#""Dwayne \"The Rock\" Johnson""#)
+        );
+        assert_eq!(
+            r#"Dwayne "The Rock" Johnson"#,
+            StringLiteralQuote::parse::<VerboseError<&str>>(r#""Dwayne \"The Rock\" Johnson""#)
+                .unwrap()
+                .1
+                .lexical_form()
+                .unwrap()
         );
         // URI
         assert_eq!(
@@ -1977,6 +2042,19 @@ mod tests {
                 }
             )),
             StringLiteralQuote::parse::<VerboseError<&str>>(r#""http://example.com""#)
+        );
+    }
+
+    #[test]
+    fn parse_string_literal_quote_special_chars() {
+        assert_eq!(
+            Ok((
+                "",
+                StringLiteralQuote {
+                    string: Cow::Borrowed("test® Group GmbH"),
+                }
+            )),
+            StringLiteralQuote::parse::<VerboseError<&str>>(r#""test® Group GmbH""#)
         );
     }
 
