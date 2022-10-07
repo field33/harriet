@@ -97,7 +97,6 @@ fn example15() {
 }
 
 #[test]
-#[ignore]
 fn example16() {
     parse_example_file("example16.ttl");
 }

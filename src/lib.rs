@@ -169,8 +169,7 @@ impl<'a> Whitespace<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Triples<'a> {
     Labeled(Option<Whitespace<'a>>, Subject<'a>, PredicateObjectList<'a>),
-    // Labeled()
-    // Labeled()
+    Blank(Option<Whitespace<'a>>, BlankNodePropertyList<'a>, Option<PredicateObjectList<'a>>)
 }
 
 impl<'a> Triples<'a> {
@@ -180,14 +179,24 @@ impl<'a> Triples<'a> {
     {
         map(
             tuple((
-                map(
-                    tuple((
-                        opt(Whitespace::parse),
-                        Subject::parse,
-                        PredicateObjectList::parse,
+                alt((
+                    map(
+                        tuple((
+                            opt(Whitespace::parse),
+                            Subject::parse,
+                            PredicateObjectList::parse,
+                        )),
+                        |(leading, subject, list)| Self::Labeled(leading, subject, list),
+                    ),
+                    map(
+                        tuple((
+                            opt(Whitespace::parse),
+                            BlankNodePropertyList::parse,
+                            opt(PredicateObjectList::parse),
+                        )),
+                        |(leading, blank_node_property_list, predicate_object_list)| Self::Blank(leading, blank_node_property_list, predicate_object_list),
+                    ),
                     )),
-                    |(leading, subject, list)| Self::Labeled(leading, subject, list),
-                ),
                 multispace1,
                 char('.'),
             )),
@@ -201,6 +210,12 @@ impl<'a> Triples<'a> {
                 Whitespace::gen_option(leading),
                 Subject::gen(subject),
                 PredicateObjectList::gen(predicate_object_list),
+                cf_string(" ."),
+            ))),
+            Self::Blank(leading, blank_node_property_list, predicate_object_list) => Box::new(cf_tuple((
+                Whitespace::gen_option(leading),
+                BlankNodePropertyList::gen(blank_node_property_list),
+                PredicateObjectList::gen_option(predicate_object_list),
                 cf_string(" ."),
             ))),
             #[allow(unreachable_patterns)]
@@ -464,6 +479,15 @@ impl<'a> PredicateObjectList<'a> {
                     ))
                 }),
         )
+    }
+
+    fn gen_option<'b: 'a, W: Write + 'b>(
+        subject_opt: &'b Option<Self>,
+    ) -> Box<dyn SerializeFn<W> + 'b> {
+        match subject_opt {
+            Some(inner) => Box::new(Self::gen(&inner)),
+            None => Box::new(cf_string("")),
+        }
     }
 
     fn gen_opt_semicolon<W: Write + 'a>(

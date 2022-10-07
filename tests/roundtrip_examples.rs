@@ -114,7 +114,6 @@ fn example15() {
 }
 
 #[test]
-#[ignore]
 fn example16() {
     roundtrip_example_file("example16.ttl");
 }

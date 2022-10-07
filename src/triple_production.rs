@@ -1,5 +1,5 @@
 use crate::{BlankNode, BlankNodeLabel, Collection, Directive, IRIReference, Literal, Object, PredicateObjectList, Statement, Subject, Triples, TurtleDocument, Verb, IRI, NumericLiteral};
-use anyhow::{anyhow, Context, Error};
+use anyhow::{anyhow, bail, Context, Error};
 use either::Either;
 use oxiri::Iri;
 use snowflake::ProcessUniqueId;
@@ -68,6 +68,10 @@ impl TripleProducer {
                                 &mut triples,
                                 predicate_object_list,
                             )?;
+                        }
+                        Triples::Blank(_, _, _) => {
+                            // TODO
+                            bail!("Production of triple statements with blankNodePropertyList as subject not supported yet.")
                         }
                     }
                 }
