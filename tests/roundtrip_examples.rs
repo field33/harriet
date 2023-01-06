@@ -227,8 +227,6 @@ fn wildtype_rdfs_ontology() {
 }
 
 #[test]
-#[ignore]
-// TODO: Artifact with duplicate commas somewhere
 fn wildtype_owl_ontology() {
     roundtrip_wildtype_file("owl.ttl");
 }
