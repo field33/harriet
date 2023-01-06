@@ -200,6 +200,26 @@ fn example24_simple2() {
 }
 
 #[test]
+fn wildtype_rdf_ontology() {
+    parse_wildtype_file("rdf.ttl");
+}
+
+#[test]
+fn wildtype_rdfs_ontology() {
+    parse_wildtype_file("rdfs.ttl");
+}
+
+#[test]
+fn wildtype_owl_ontology() {
+    parse_wildtype_file("owl.ttl");
+}
+
+#[test]
+fn wildtype_dublin_core_elements_ontology() {
+    parse_wildtype_file("owl.ttl");
+}
+
+#[test]
 fn leading_whitespace_base() {
     let file_name = "leading_whitespace_base.ttl";
     let ontology =
