@@ -1,0 +1,3 @@
+[toolchain]
+# MSRV is 1.65.0 according to Cargo.toml - This may specify a newer version for e.g. performance improvements
+channel = "1.65.0"
