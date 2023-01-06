@@ -220,6 +220,11 @@ fn wildtype_dublin_core_elements_ontology() {
 }
 
 #[test]
+fn wildtype_bibo_ontology() {
+    parse_wildtype_file("bibo.ttl");
+}
+
+#[test]
 fn leading_whitespace_base() {
     let file_name = "leading_whitespace_base.ttl";
     let ontology =

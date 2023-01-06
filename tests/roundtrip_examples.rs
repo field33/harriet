@@ -242,3 +242,10 @@ fn wildtype_foaf_mirror_ontology() {
 fn wildtype_dublin_core_elements_ontology() {
     roundtrip_wildtype_file("dublin_core_elements.ttl");
 }
+
+#[test]
+#[ignore]
+// TODO: Artifact with duplicate commas somewhere
+fn wildtype_bibo_ontology() {
+    roundtrip_wildtype_file("bibo.ttl");
+}
