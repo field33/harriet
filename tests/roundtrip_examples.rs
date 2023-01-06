@@ -25,7 +25,7 @@ fn roundtrip_wildtype_file(file_name: &str) {
 
     let parsed = TurtleDocument::parse::<VerboseError<&str>>(&input_ontology).unwrap().1;
 
-    let mut mem: [u8; 10024] = [0; 10024];
+    let mut mem: [u8; 100024] = [0; 100024];
     let buf = &mut mem[..];
     let (_, written_bytes) = cookie_factory::gen(
         TurtleDocument::gen(&parsed), buf
@@ -214,4 +214,31 @@ fn example24_simple1() {
 #[test]
 fn example24_simple2() {
     roundtrip_wildtype_file("example24_simple2.ttl");
+}
+
+#[test]
+fn wildtype_rdf_ontology() {
+    roundtrip_wildtype_file("rdf.ttl");
+}
+
+#[test]
+fn wildtype_rdfs_ontology() {
+    roundtrip_wildtype_file("rdfs.ttl");
+}
+
+#[test]
+#[ignore]
+// TODO: Artifact with duplicate commas somewhere
+fn wildtype_owl_ontology() {
+    roundtrip_wildtype_file("owl.ttl");
+}
+
+#[test]
+fn wildtype_foaf_mirror_ontology() {
+    roundtrip_wildtype_file("foaf_mirror.ttl");
+}
+
+#[test]
+fn wildtype_dublin_core_elements_ontology() {
+    roundtrip_wildtype_file("dublin_core_elements.ttl");
 }
