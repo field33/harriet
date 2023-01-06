@@ -967,7 +967,8 @@ impl<'a> PrefixedName<'a> {
                 // (there are restrictions for first and last character)
                 opt(many1(satisfy(Self::is_pn_chars))),
                 char(':'),
-                opt(is_not(" \t\r\n")),
+                // TODO: proper implementation of PN_LOCAL
+                opt(is_not(" \t\r\n,")),
             )),
             |(prefix, _, name)| Self {
                 prefix: prefix.map(|chars| Cow::Owned(chars.into_iter().collect())),
