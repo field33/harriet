@@ -89,7 +89,6 @@ fn example14() {
 }
 
 #[test]
-#[ignore]
 fn example15() {
     triples_example_file("example15.ttl");
 }
@@ -106,13 +105,11 @@ fn example17() {
 }
 
 #[test]
-#[ignore]
 fn example18() {
     triples_example_file("example18.ttl");
 }
 
 #[test]
-#[ignore]
 fn example19() {
     triples_example_file("example19.ttl");
 }
@@ -128,7 +125,6 @@ fn example21() {
 }
 
 #[test]
-#[ignore]
 // Multiline string in a single line via \n escape sequence
 fn example22() {
     triples_example_file("example22.ttl");
@@ -142,6 +138,7 @@ fn example23() {
 
 #[test]
 #[ignore]
+// Will never work, as it has undeclared `:` prefix.
 // Blank nodes + numbers
 fn example24() {
     triples_example_file("example24.ttl");
@@ -155,6 +152,7 @@ fn example25() {
 
 #[test]
 #[ignore]
+// Will never work, as it has undeclared `:` prefix.
 // Blank nodes + numbers
 fn example26() {
     triples_example_file("example26.ttl");
@@ -167,14 +165,12 @@ fn example1_without_a() {
 }
 
 #[test]
-#[ignore]
 // Trimmed down example of nested blankNodePropertyList
 fn example_nested_lists() {
     triples_wildtype_file("nested_lists.ttl");
 }
 
 #[test]
-#[ignore]
 // Slightly more expanded example of nested blankNodePropertyList
 fn example_nested_lists2() {
     triples_wildtype_file("nested_lists2.ttl");

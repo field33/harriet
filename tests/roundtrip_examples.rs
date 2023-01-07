@@ -108,7 +108,6 @@ fn example14() {
 }
 
 #[test]
-#[ignore]
 fn example15() {
     roundtrip_example_file("example15.ttl");
 }
@@ -124,7 +123,6 @@ fn example17() {
 }
 
 #[test]
-#[ignore]
 fn example18() {
     roundtrip_example_file("example18.ttl");
 }
@@ -135,7 +133,6 @@ fn example19() {
 }
 
 #[test]
-#[ignore]
 fn example20() {
     roundtrip_example_file("example20.ttl");
 }
@@ -162,7 +159,6 @@ fn example24() {
 }
 
 #[test]
-#[ignore]
 fn example25() {
     roundtrip_example_file("example25.ttl");
 }
@@ -200,7 +196,6 @@ fn example_nested_lists() {
 }
 
 #[test]
-#[ignore]
 // Slightly more expanded example of nested blankNodePropertyList
 fn example_nested_lists2() {
     roundtrip_wildtype_file("nested_lists2.ttl");
@@ -242,8 +237,6 @@ fn wildtype_dublin_core_elements_ontology() {
 }
 
 #[test]
-#[ignore]
-// TODO: Artifact with duplicate commas somewhere
 fn wildtype_bibo_ontology() {
     roundtrip_wildtype_file("bibo.ttl");
 }
