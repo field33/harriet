@@ -2102,6 +2102,70 @@ mod tests {
             )),
             Collection::parse::<VerboseError<&str>>("( :Entity1 \n:Entity2 :Entity3 )")
         );
+        // Single element with whitespace
+        assert_eq!(
+            Ok((
+                "",
+                Collection {
+                    list: vec![(
+                        Some(Whitespace {
+                            whitespace: Cow::Borrowed("  ")
+                        }),
+                        Object::Literal(Literal::NumericLiteral(NumericLiteral::Integer(
+                            Integer {
+                                sign: None,
+                                number_literal: Cow::Borrowed("1")
+                            }
+                        ))),
+                        Some(Whitespace::space())
+                    )]
+                }
+            )),
+            Collection::parse::<VerboseError<&str>>("(  1 )")
+        );
+        // Collection of collections
+        assert_eq!(
+            Ok((
+                "",
+                Collection {
+                    list: vec![
+                        (
+                            None,
+                            Object::Collection(Collection {
+                                list: vec![(
+                                    None,
+                                    Object::Literal(Literal::NumericLiteral(
+                                        NumericLiteral::Integer(Integer {
+                                            sign: None,
+                                            number_literal: Cow::Borrowed("1")
+                                        })
+                                    )),
+                                    None,
+                                )]
+                            }),
+                            Some(Whitespace::space())
+                        ),
+                        (
+                            None,
+                            Object::Collection(Collection {
+                                list: vec![(
+                                    None,
+                                    Object::Literal(Literal::NumericLiteral(
+                                        NumericLiteral::Integer(Integer {
+                                            sign: None,
+                                            number_literal: Cow::Borrowed("2")
+                                        })
+                                    )),
+                                    None,
+                                )]
+                            }),
+                            None
+                        )
+                    ]
+                }
+            )),
+            Collection::parse::<VerboseError<&str>>("((1) (2))")
+        );
     }
 
     #[test]
