@@ -10,8 +10,8 @@ use cookie_factory::sequence::tuple as cf_tuple;
 use cookie_factory::SerializeFn;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_till, take_while1};
-use nom::character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, satisfy};
-use nom::combinator::{map, map_parser, opt};
+use nom::character::complete::{alpha1, alphanumeric1, char, multispace1, satisfy};
+use nom::combinator::{map, opt};
 use nom::error::{ErrorKind, FromExternalError, ParseError as NomParseError, VerboseError};
 use nom::multi::{many0, many1};
 use nom::sequence::{delimited, tuple};
@@ -439,7 +439,8 @@ impl<'a> BlankNodeAnonymous<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PredicateObjectList<'a> {
     pub list: Vec<(
-        Whitespace<'a>,
+        // Leading whitespace
+        Option<Whitespace<'a>>,
         Verb<'a>,
         ObjectList<'a>,
         Option<Whitespace<'a>>, /* Token: ';' */
@@ -454,7 +455,7 @@ impl<'a> PredicateObjectList<'a> {
         map(
             many1(map(
                 tuple((
-                    Whitespace::parse,
+                    opt(Whitespace::parse),
                     Verb::parse,
                     ObjectList::parse,
                     opt(tuple((opt(Whitespace::parse), tag(";")))),
@@ -480,7 +481,7 @@ impl<'a> PredicateObjectList<'a> {
                 .iter()
                 .map(|(leading, verb, object_list, ws_2)| {
                     cf_tuple((
-                        Whitespace::gen(leading),
+                        Whitespace::gen_option(leading),
                         Verb::gen(verb),
                         ObjectList::gen(object_list),
                         Whitespace::gen_option(ws_2),
@@ -529,17 +530,6 @@ impl<'a> BlankNodePropertyList<'a> {
                 list,
                 trailing_whitespace: ws,
             },
-        )(input)
-    }
-
-    fn parse_parens<E>(input: &'a str) -> IResult<&'a str, &'a str, E>
-    where
-        E: NomParseError<&'a str>,
-    {
-        delimited(
-            tuple((char('['), multispace0)),
-            is_not("]"),
-            tuple((multispace0, char(']'))),
         )(input)
     }
 
@@ -989,7 +979,7 @@ impl<'a> PrefixedName<'a> {
                 opt(many1(satisfy(Self::is_pn_chars))),
                 char(':'),
                 // TODO: proper implementation of PN_LOCAL
-                opt(is_not(" \t\r\n,)")),
+                opt(is_not(" \t\r\n,)]")),
             )),
             |(prefix, _, name)| Self {
                 prefix: prefix.map(|chars| Cow::Owned(chars.into_iter().collect())),
@@ -2317,7 +2307,7 @@ mod tests {
                     })),
                     PredicateObjectList {
                         list: vec![(
-                            Whitespace::space(),
+                            Some(Whitespace::space()),
                             IRI::IRIReference(IRIReference {
                                 iri: Cow::Borrowed(
                                     "http://www.perceive.net/schemas/relationship/enemyOf"
@@ -2466,9 +2456,9 @@ mod tests {
                     list: PredicateObjectList {
                         list: vec![
                             (
-                                Whitespace {
+                                Some(Whitespace {
                                     whitespace: Cow::Borrowed("\n                        ")
-                                },
+                                }),
                                 IRI::PrefixedName(PrefixedName {
                                     prefix: Some("ex".into()),
                                     name: Some("fullname".into())
@@ -2492,9 +2482,9 @@ mod tests {
                                 None,
                             ),
                             (
-                                Whitespace {
+                                Some(Whitespace {
                                     whitespace: Cow::Borrowed("\n                        ")
-                                },
+                                }),
                                 IRI::PrefixedName(PrefixedName {
                                     prefix: Some("ex".into()),
                                     name: Some("homePage".into())
@@ -2525,6 +2515,39 @@ mod tests {
                       ]"#
             )
         );
+        assert_eq!(
+            Ok((
+                "",
+                BlankNodePropertyList {
+                    list: PredicateObjectList {
+                        list: vec![(
+                            None,
+                            IRI::PrefixedName(PrefixedName {
+                                prefix: None,
+                                name: Some("p".into())
+                            })
+                            .into(),
+                            ObjectList {
+                                list: vec![(
+                                    None,
+                                    Some(Whitespace::space()),
+                                    Object::IRI(
+                                        IRI::PrefixedName(PrefixedName {
+                                            prefix: None,
+                                            name: Some("q".into())
+                                        })
+                                        .into(),
+                                    )
+                                )]
+                            },
+                            None,
+                        )]
+                    },
+                    trailing_whitespace: None,
+                },
+            )),
+            BlankNodePropertyList::parse::<VerboseError<&str>>("[:p :q]")
+        );
     }
 
     #[test]
@@ -2535,7 +2558,7 @@ mod tests {
                 PredicateObjectList {
                     list: vec![
                         (
-                            Whitespace::space(),
+                            Some(Whitespace::space()),
                             IRI::PrefixedName(PrefixedName {
                                 prefix: Some("ex".into()),
                                 name: Some("fullname".into())
@@ -2559,9 +2582,9 @@ mod tests {
                             None,
                         ),
                         (
-                            Whitespace {
+                            Some(Whitespace {
                                 whitespace: Cow::Borrowed("\n")
-                            },
+                            }),
                             IRI::PrefixedName(PrefixedName {
                                 prefix: Some("ex".into()),
                                 name: Some("homePage".into())
@@ -2741,7 +2764,7 @@ mod tests {
                 })),
                 PredicateObjectList {
                     list: vec![(
-                        Whitespace::space(),
+                        Some(Whitespace::space()),
                         IRI::PrefixedName(PrefixedName {
                             prefix: Some(Cow::Borrowed("rdf")),
                             name: Some(Cow::Borrowed("type")),

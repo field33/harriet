@@ -159,8 +159,6 @@ fn example24() {
 }
 
 #[test]
-#[ignore]
-// TODO: nested parens
 fn example25() {
     roundtrip_example_file("example25.ttl");
 }
