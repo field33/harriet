@@ -123,8 +123,6 @@ fn example17() {
 }
 
 #[test]
-#[ignore]
-// TODO: empty collection
 fn example18() {
     roundtrip_example_file("example18.ttl");
 }

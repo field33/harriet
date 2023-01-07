@@ -1,4 +1,7 @@
-use crate::{BlankNode, BlankNodeLabel, Collection, Directive, IRIReference, Literal, Object, PredicateObjectList, Statement, Subject, Triples, TurtleDocument, Verb, IRI, NumericLiteral};
+use crate::{
+    BlankNode, BlankNodeLabel, Collection, Directive, IRIReference, Literal, NumericLiteral,
+    Object, PredicateObjectList, Statement, Subject, Triples, TurtleDocument, Verb, IRI,
+};
 use anyhow::{anyhow, bail, Context, Error};
 use either::Either;
 use oxiri::Iri;
@@ -129,27 +132,21 @@ impl TripleProducer {
                 }),
                 Literal::NumericLiteral(numeric_literal) => {
                     RdfObject::Literal(match numeric_literal {
-                        NumericLiteral::Integer(integer_literal) => {
-                            RdfLiteral {
-                                lexical_form: integer_literal.lexical_form().into(),
-                                datatype_iri: Some(iri_constants::XSD_INTEGER),
-                                language_tag: None,
-                            }
-                        }
-                        NumericLiteral::Decimal(decimal_literal) => {
-                            RdfLiteral {
-                                lexical_form: decimal_literal.lexical_form().into(),
-                                datatype_iri: Some(iri_constants::XSD_DECIMAL),
-                                language_tag: None,
-                            }
-                        }
-                        NumericLiteral::Double(double_literal) => {
-                            RdfLiteral {
-                                lexical_form: double_literal.lexical_form().into(),
-                                datatype_iri: Some(iri_constants::XSD_DOUBLE),
-                                language_tag: None,
-                            }
-                        }
+                        NumericLiteral::Integer(integer_literal) => RdfLiteral {
+                            lexical_form: integer_literal.lexical_form().into(),
+                            datatype_iri: Some(iri_constants::XSD_INTEGER),
+                            language_tag: None,
+                        },
+                        NumericLiteral::Decimal(decimal_literal) => RdfLiteral {
+                            lexical_form: decimal_literal.lexical_form().into(),
+                            datatype_iri: Some(iri_constants::XSD_DECIMAL),
+                            language_tag: None,
+                        },
+                        NumericLiteral::Double(double_literal) => RdfLiteral {
+                            lexical_form: double_literal.lexical_form().into(),
+                            datatype_iri: Some(iri_constants::XSD_DOUBLE),
+                            language_tag: None,
+                        },
                     })
                 }
             },
@@ -346,9 +343,10 @@ impl<'a> ProducerState<'a> {
     }
 
     fn resolve_prefix(&self, prefix: Option<&str>) -> Result<&String, Error> {
-        self.namespaces
-            .get(prefix.unwrap_or(""))
-            .context("Unable to resolve prefix `{prefix}`")
+        self.namespaces.get(prefix.unwrap_or("")).context(format!(
+            "Unable to resolve prefix `{prefix}`",
+            prefix = prefix.unwrap_or("")
+        ))
     }
 }
 

@@ -669,9 +669,9 @@ impl<'a> Collection<'a> {
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
         map(
-            map_parser(
-                Self::parse_parens,
-                many1(map(
+            delimited(
+                char('('),
+                many0(map(
                     tuple((
                         opt(Whitespace::parse),
                         Object::parse,
@@ -681,16 +681,10 @@ impl<'a> Collection<'a> {
                         (whitespace_before, object, whitespace_after)
                     },
                 )),
+                char(')'),
             ),
             |list| Self { list },
         )(input)
-    }
-
-    fn parse_parens<E>(input: &'a str) -> IResult<&'a str, &'a str, E>
-    where
-        E: NomParseError<&'a str>,
-    {
-        delimited(char('('), is_not(")"), char(')'))(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
@@ -981,7 +975,6 @@ impl<'a> IRIReference<'a> {
 pub struct PrefixedName<'a> {
     pub prefix: Option<Cow<'a, str>>,
     pub name: Option<Cow<'a, str>>,
-    // TODO: locale
 }
 
 impl<'a> PrefixedName<'a> {
@@ -996,7 +989,7 @@ impl<'a> PrefixedName<'a> {
                 opt(many1(satisfy(Self::is_pn_chars))),
                 char(':'),
                 // TODO: proper implementation of PN_LOCAL
-                opt(is_not(" \t\r\n,")),
+                opt(is_not(" \t\r\n,)")),
             )),
             |(prefix, _, name)| Self {
                 prefix: prefix.map(|chars| Cow::Owned(chars.into_iter().collect())),
