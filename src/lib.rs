@@ -13,7 +13,7 @@ use nom::bytes::complete::{is_not, tag, take_till, take_while1};
 use nom::character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, satisfy};
 use nom::combinator::{map, map_parser, opt};
 use nom::error::{ErrorKind, FromExternalError, ParseError as NomParseError, VerboseError};
-use nom::multi::{many0, many1, separated_list1};
+use nom::multi::{many0, many1};
 use nom::sequence::{delimited, tuple};
 use nom::Err;
 use nom::{IResult, Needed};
@@ -169,7 +169,11 @@ impl<'a> Whitespace<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Triples<'a> {
     Labeled(Option<Whitespace<'a>>, Subject<'a>, PredicateObjectList<'a>),
-    Blank(Option<Whitespace<'a>>, BlankNodePropertyList<'a>, Option<PredicateObjectList<'a>>)
+    Blank(
+        Option<Whitespace<'a>>,
+        BlankNodePropertyList<'a>,
+        Option<PredicateObjectList<'a>>,
+    ),
 }
 
 impl<'a> Triples<'a> {
@@ -194,9 +198,11 @@ impl<'a> Triples<'a> {
                             BlankNodePropertyList::parse,
                             opt(PredicateObjectList::parse),
                         )),
-                        |(leading, blank_node_property_list, predicate_object_list)| Self::Blank(leading, blank_node_property_list, predicate_object_list),
+                        |(leading, blank_node_property_list, predicate_object_list)| {
+                            Self::Blank(leading, blank_node_property_list, predicate_object_list)
+                        },
                     ),
-                    )),
+                )),
                 multispace1,
                 char('.'),
             )),
@@ -212,12 +218,14 @@ impl<'a> Triples<'a> {
                 PredicateObjectList::gen(predicate_object_list),
                 cf_string(" ."),
             ))),
-            Self::Blank(leading, blank_node_property_list, predicate_object_list) => Box::new(cf_tuple((
-                Whitespace::gen_option(leading),
-                BlankNodePropertyList::gen(blank_node_property_list),
-                PredicateObjectList::gen_option(predicate_object_list),
-                cf_string(" ."),
-            ))),
+            Self::Blank(leading, blank_node_property_list, predicate_object_list) => {
+                Box::new(cf_tuple((
+                    Whitespace::gen_option(leading),
+                    BlankNodePropertyList::gen(blank_node_property_list),
+                    PredicateObjectList::gen_option(predicate_object_list),
+                    cf_string(" ."),
+                )))
+            }
             #[allow(unreachable_patterns)]
             _ => todo!(),
         }
@@ -646,7 +654,13 @@ impl<'a> Object<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Collection<'a> {
-    pub list: Vec<Object<'a>>,
+    pub list: Vec<(
+        // Leading whitespace
+        Option<Whitespace<'a>>,
+        Object<'a>,
+        // Trailing whitespace
+        Option<Whitespace<'a>>,
+    )>,
 }
 
 impl<'a> Collection<'a> {
@@ -654,11 +668,21 @@ impl<'a> Collection<'a> {
     where
         E: NomParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        map_parser(
-            Self::parse_parens,
-            map(separated_list1(multispace1, Object::parse), |list| Self {
-                list,
-            }),
+        map(
+            map_parser(
+                Self::parse_parens,
+                many1(map(
+                    tuple((
+                        opt(Whitespace::parse),
+                        Object::parse,
+                        opt(Whitespace::parse),
+                    )),
+                    |(whitespace_before, object, whitespace_after)| {
+                        (whitespace_before, object, whitespace_after)
+                    },
+                )),
+            ),
+            |list| Self { list },
         )(input)
     }
 
@@ -666,19 +690,23 @@ impl<'a> Collection<'a> {
     where
         E: NomParseError<&'a str>,
     {
-        delimited(
-            tuple((char('('), multispace0)),
-            is_not(")"),
-            tuple((multispace0, char(')'))),
-        )(input)
+        delimited(char('('), is_not(")"), char(')'))(input)
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> impl SerializeFn<W> + 'a {
         cf_tuple((
             cf_string("("),
-            cf_separated_list(
-                cf_string(" "),
-                subject.list.iter().map(|object| Object::gen(object)),
+            cf_all(
+                subject
+                    .list
+                    .iter()
+                    .map(|(whitespace_leading, object, whitespace_trailing)| {
+                        cf_tuple((
+                            Whitespace::gen_option(whitespace_leading),
+                            Object::gen(object),
+                            Whitespace::gen_option(whitespace_trailing),
+                        ))
+                    }),
             ),
             cf_string(")"),
         ))
@@ -1274,7 +1302,13 @@ impl<'a> Double<'a> {
                     opt(many1(satisfy(Integer::is_number))),
                     Self::parse_exponent,
                 )),
-                |(sign, integer, fractional_dot, fractional, (exponent_char, exponent_sign, exponent_integer))| Self {
+                |(
+                    sign,
+                    integer,
+                    fractional_dot,
+                    fractional,
+                    (exponent_char, exponent_sign, exponent_integer),
+                )| Self {
                     sign: sign.map(|c| Cow::Owned(c.to_string())),
                     integer: Some(Cow::Owned(integer.into_iter().collect())),
                     fractional_dot: Some(Cow::Borrowed(fractional_dot)),
@@ -1291,7 +1325,12 @@ impl<'a> Double<'a> {
                     many1(satisfy(Integer::is_number)),
                     Self::parse_exponent,
                 )),
-                |(sign, fractional_dot, fractional, (exponent_char, exponent_sign, exponent_integer))| Self {
+                |(
+                    sign,
+                    fractional_dot,
+                    fractional,
+                    (exponent_char, exponent_sign, exponent_integer),
+                )| Self {
                     sign: sign.map(|c| Cow::Owned(c.to_string())),
                     integer: None,
                     fractional_dot: Some(Cow::Borrowed(fractional_dot)),
@@ -1316,7 +1355,7 @@ impl<'a> Double<'a> {
                     exponent_sign,
                     exponent_integer,
                 },
-            )
+            ),
         ))(input)
     }
 
@@ -1346,19 +1385,19 @@ impl<'a> Double<'a> {
     }
 
     fn gen<W: Write + 'a>(subject: &'a Self) -> Box<dyn SerializeFn<W> + 'a> {
-            Box::new(cf_tuple((
-                gen_option_cow_str(&subject.sign),
-                gen_option_cow_str(&subject.integer),
-                gen_option_cow_str(&subject.fractional_dot),
-                gen_option_cow_str(&subject.fractional),
-                cf_string(&subject.exponent_char),
-                gen_option_cow_str(&subject.exponent_sign),
-                cf_string(&subject.exponent_integer),
-            )))
+        Box::new(cf_tuple((
+            gen_option_cow_str(&subject.sign),
+            gen_option_cow_str(&subject.integer),
+            gen_option_cow_str(&subject.fractional_dot),
+            gen_option_cow_str(&subject.fractional),
+            cf_string(&subject.exponent_char),
+            gen_option_cow_str(&subject.exponent_sign),
+            cf_string(&subject.exponent_integer),
+        )))
     }
 
-        pub fn lexical_form(&self) -> String {
-            format!(
+    pub fn lexical_form(&self) -> String {
+        format!(
                 "{sign}{integer}{fractional_dot}{fractional}{exponent_char}{exponent_sign}{exponent_integer}",
                 sign = self.sign.as_ref().unwrap_or(&Cow::Borrowed("")),
                 integer = self.integer.as_ref().unwrap_or(&Cow::Borrowed("")),
@@ -1368,7 +1407,7 @@ impl<'a> Double<'a> {
                 exponent_sign = self.exponent_sign.as_ref().unwrap_or(&Cow::Borrowed("")),
                 exponent_integer = self.exponent_integer,
             )
-        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2004,18 +2043,30 @@ mod tests {
                 "",
                 Collection {
                     list: vec![
-                        Object::IRI(IRI::PrefixedName(PrefixedName {
-                            prefix: None,
-                            name: Some("Entity1".into())
-                        })),
-                        Object::IRI(IRI::PrefixedName(PrefixedName {
-                            prefix: None,
-                            name: Some("Entity2".into())
-                        })),
-                        Object::IRI(IRI::PrefixedName(PrefixedName {
-                            prefix: None,
-                            name: Some("Entity3".into())
-                        }))
+                        (
+                            None,
+                            Object::IRI(IRI::PrefixedName(PrefixedName {
+                                prefix: None,
+                                name: Some("Entity1".into())
+                            })),
+                            Some(Whitespace::space())
+                        ),
+                        (
+                            None,
+                            Object::IRI(IRI::PrefixedName(PrefixedName {
+                                prefix: None,
+                                name: Some("Entity2".into())
+                            })),
+                            Some(Whitespace::space())
+                        ),
+                        (
+                            None,
+                            Object::IRI(IRI::PrefixedName(PrefixedName {
+                                prefix: None,
+                                name: Some("Entity3".into())
+                            })),
+                            None
+                        ),
                     ]
                 }
             )),
@@ -2027,18 +2078,32 @@ mod tests {
                 "",
                 Collection {
                     list: vec![
-                        Object::IRI(IRI::PrefixedName(PrefixedName {
-                            prefix: None,
-                            name: Some("Entity1".into())
-                        })),
-                        Object::IRI(IRI::PrefixedName(PrefixedName {
-                            prefix: None,
-                            name: Some("Entity2".into())
-                        })),
-                        Object::IRI(IRI::PrefixedName(PrefixedName {
-                            prefix: None,
-                            name: Some("Entity3".into())
-                        }))
+                        (
+                            Some(Whitespace::space()),
+                            Object::IRI(IRI::PrefixedName(PrefixedName {
+                                prefix: None,
+                                name: Some("Entity1".into())
+                            })),
+                            Some(Whitespace {
+                                whitespace: Cow::Borrowed(" \n")
+                            })
+                        ),
+                        (
+                            None,
+                            Object::IRI(IRI::PrefixedName(PrefixedName {
+                                prefix: None,
+                                name: Some("Entity2".into())
+                            })),
+                            Some(Whitespace::space())
+                        ),
+                        (
+                            None,
+                            Object::IRI(IRI::PrefixedName(PrefixedName {
+                                prefix: None,
+                                name: Some("Entity3".into())
+                            })),
+                            Some(Whitespace::space())
+                        ),
                     ]
                 }
             )),
@@ -2053,18 +2118,30 @@ mod tests {
         let (_, written_bytes) = cookie_factory::gen(
             Collection::gen(&Collection {
                 list: vec![
-                    Object::IRI(IRI::PrefixedName(PrefixedName {
-                        prefix: None,
-                        name: Some("Entity1".into()),
-                    })),
-                    Object::IRI(IRI::PrefixedName(PrefixedName {
-                        prefix: None,
-                        name: Some("Entity2".into()),
-                    })),
-                    Object::IRI(IRI::PrefixedName(PrefixedName {
-                        prefix: None,
-                        name: Some("Entity3".into()),
-                    })),
+                    (
+                        None,
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity1".into()),
+                        })),
+                        Some(Whitespace::space()),
+                    ),
+                    (
+                        None,
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity2".into()),
+                        })),
+                        Some(Whitespace::space()),
+                    ),
+                    (
+                        None,
+                        Object::IRI(IRI::PrefixedName(PrefixedName {
+                            prefix: None,
+                            name: Some("Entity3".into()),
+                        })),
+                        None,
+                    ),
                 ],
             }),
             buf,

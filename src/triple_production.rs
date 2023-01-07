@@ -207,7 +207,7 @@ impl TripleProducer {
                 let mut first_blank_node: Option<RdfBlankNode> = None;
 
                 let mut previous_blank_node = None;
-                for object in collection.list {
+                for (_, object, _) in collection.list {
                     let current_blank_node = state.allocate_blank_node();
                     if matches!(first_blank_node, None) {
                         first_blank_node = Some(current_blank_node.clone());
