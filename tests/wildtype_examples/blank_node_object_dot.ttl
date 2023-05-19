@@ -1,0 +1,7 @@
+@prefix : <http://example.com/> .
+
+<http://example.com/TriplesMap0>
+    a :Foo;
+    :fooBar [
+        a :barFoo;
+    ].
