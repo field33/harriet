@@ -223,6 +223,12 @@ fn wildtype_bibo_ontology() {
 }
 
 #[test]
+#[ignore]
+fn wildtype_blank_node_object_dot() {
+    parse_wildtype_file("blank_node_object_dot.ttl");
+}
+
+#[test]
 fn leading_whitespace_base() {
     let file_name = "leading_whitespace_base.ttl";
     let ontology =
