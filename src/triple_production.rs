@@ -388,12 +388,13 @@ pub struct RdfLiteral<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RdfBlankNode {
-    internal_id: ProcessUniqueId,
+    pub internal_id: ProcessUniqueId,
 }
 
 impl RdfBlankNode {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             internal_id: ProcessUniqueId::new(),
         }
